@@ -1,0 +1,327 @@
+// Schema Prisma pour l'API Résultats Électoraux 2025
+// Base de données : SQL Server - Basé sur le diagramme TBL_*
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================
+// MODÈLES AUTHENTIFICATION (inchangés)
+// ===========================================
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  firstName   String
+  lastName    String
+  password    String
+  roleId      String   @default("USER")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  role        Role     @relation(fields: [roleId], references: [id])
+  sessions    Session[]
+  departements TblDept[]
+  cellules    TblCel[]
+  importsExcel TblImportExcelCel[]
+  
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshToken String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("sessions")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  users       User[]
+  
+  @@map("roles")
+}
+
+// ===========================================
+// MODÈLES GÉOGRAPHIQUES ET ADMINISTRATIFS
+// ===========================================
+
+// TBL_REG - Régions
+model TblReg {
+  id String @id @default(cuid())
+  codeRegion String @unique @map("COD_REG")
+  libelleRegion String @map("LIB_REG")
+  
+  // Relations
+  departements TblDept[]
+  
+  @@map("TBL_REG")
+}
+
+// TBL_DEPT - Départements
+model TblDept {
+  id String @id @default(cuid())
+  codeDepartement String @unique @map("COD_DEPT")
+  codeRegion String @map("COD_REG")
+  numeroUtilisateur String? @map("NUM_UTIL")
+  statutPublication String? @map("STAT_PUB")
+  libelleDepartement String @map("LIB_DEPT")
+  
+  // Relations
+  region TblReg @relation(fields: [codeRegion], references: [codeRegion])
+  utilisateur User? @relation(fields: [numeroUtilisateur], references: [id])
+  sousPrefectures TblSp[]
+  communes TblCom[]
+  lieuxVote TblLv[]
+  bureauxVote TblBv[]
+  resultats TblResultat[]
+  proclamationResultats TblProclamationResultat[]
+  
+  @@map("TBL_DEPT")
+}
+
+// TBL_SP - Sous-Préfectures
+model TblSp {
+  id String @id @default(cuid())
+  codeDepartement String @map("COD_DEPT")
+  codeSousPrefecture String @map("COD_SP")
+  libelleSousPrefecture String @map("LIB_SP")
+  
+  // Relations
+  departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement])
+  communes TblCom[]
+  lieuxVote TblLv[]
+  bureauxVote TblBv[]
+  resultats TblResultat[]
+  
+  @@unique([codeDepartement, codeSousPrefecture])
+  @@map("TBL_SP")
+}
+
+// TBL_COM - Communes
+model TblCom {
+  id String @id @default(cuid())
+  codeDepartement String @map("COD_DEPT")
+  codeSousPrefecture String @map("COD_SP")
+  codeCommune String @map("COD_COM")
+  libelleCommune String @map("LIB_COM")
+  
+  // Relations
+  departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement], onDelete: NoAction, onUpdate: NoAction)
+  sousPrefecture TblSp @relation(fields: [codeDepartement, codeSousPrefecture], references: [codeDepartement, codeSousPrefecture], onDelete: NoAction, onUpdate: NoAction)
+  lieuxVote TblLv[]
+  bureauxVote TblBv[]
+  resultats TblResultat[]
+  
+  @@unique([codeDepartement, codeSousPrefecture, codeCommune])
+  @@map("TBL_COM")
+}
+
+// TBL_LV - Lieux de Vote
+model TblLv {
+  id String @id @default(cuid())
+  codeDepartement String @map("COD_DEPT")
+  codeSousPrefecture String @map("COD_SP")
+  codeCommune String @map("COD_COM")
+  codeLieuVote String @map("COD_LV")
+  codeCellule String? @map("COD_CEL")
+  libelleLieuVote String @map("LIB_LV")
+  
+  // Relations
+  departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement], onDelete: NoAction, onUpdate: NoAction)
+  sousPrefecture TblSp @relation(fields: [codeDepartement, codeSousPrefecture], references: [codeDepartement, codeSousPrefecture], onDelete: NoAction, onUpdate: NoAction)
+  commune TblCom @relation(fields: [codeDepartement, codeSousPrefecture, codeCommune], references: [codeDepartement, codeSousPrefecture, codeCommune], onDelete: NoAction, onUpdate: NoAction)
+  cellule TblCel? @relation(fields: [codeCellule], references: [codeCellule], onDelete: NoAction, onUpdate: NoAction)
+  bureauxVote TblBv[]
+  resultats TblResultat[]
+  
+  @@unique([codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote])
+  @@map("TBL_LV")
+}
+
+// ===========================================
+// MODÈLES ÉLECTORAUX
+// ===========================================
+
+// TBL_CEL - Cellules Électorales Locales
+model TblCel {
+  id String @id @default(cuid())
+  codeCellule String @unique @map("COD_CEL")
+  typeCellule String? @map("TYP_CEL")
+  ligneDebutCellule Float? @map("LIGNE_DEB_CEL")
+  etatResultatCellule String? @map("ETA_RESULTAT_CEL")
+  nombreBureauxVote Int? @map("NBR_BV_CEL")
+  libelleCellule String @map("LIB_CEL")
+  numeroUtilisateur String? @map("NUM_UTIL")
+  
+  // Relations
+  utilisateur User? @relation(fields: [numeroUtilisateur], references: [id])
+  lieuxVote TblLv[]
+  
+  @@map("TBL_CEL")
+}
+
+// TBL_BV - Bureaux de Vote
+model TblBv {
+  id String @id @default(cuid())
+  codeDepartement String @map("COD_DEPT")
+  codeSousPrefecture String @map("COD_SP")
+  codeCommune String @map("COD_COM")
+  codeLieuVote String @map("COD_LV")
+  numeroBureauVote String @map("NUMERO_BV")
+  inscrits Int? @map("INSCRITS")
+  populationHommes Int? @map("POP_HOM")
+  populationFemmes Int? @map("POP_FEM")
+  personnesAstreintes Int? @map("PERS_ASTR")
+  votantsHommes Int? @map("VOT_HOM")
+  votantsFemmes Int? @map("VOT_FEM")
+  totalVotants Int? @map("TOTAL_VOT")
+  tauxParticipation Float? @map("TAUX_PART")
+  bulletinsNuls Int? @map("BUL_NUL")
+  bulletinsBlancs Int? @map("BUL_BLANC")
+  
+  // Relations
+  departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement], onDelete: NoAction, onUpdate: NoAction)
+  sousPrefecture TblSp @relation(fields: [codeDepartement, codeSousPrefecture], references: [codeDepartement, codeSousPrefecture], onDelete: NoAction, onUpdate: NoAction)
+  commune TblCom @relation(fields: [codeDepartement, codeSousPrefecture, codeCommune], references: [codeDepartement, codeSousPrefecture, codeCommune], onDelete: NoAction, onUpdate: NoAction)
+  lieuVote TblLv @relation(fields: [codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote], references: [codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote], onDelete: NoAction, onUpdate: NoAction)
+  resultats TblResultat[]
+  
+  @@unique([codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote, numeroBureauVote])
+  @@map("TBL_BV")
+}
+
+// ===========================================
+// MODÈLES CANDIDATS ET RÉSULTATS
+// ===========================================
+
+// TBL_PARRAIN - Parrains
+model TblParrain {
+  id String @id @default(cuid())
+  codeParrain String @unique @map("COD_PAR")
+  libelleParrain String @map("LIB_PAR")
+  
+  // Relations
+  candidats TblCandidat[]
+  
+  @@map("TBL_PARRAIN")
+}
+
+// TBL_CANDIDAT - Candidats
+model TblCandidat {
+  id String @id @default(cuid())
+  numeroOrdre String @unique @map("NUMERO_ORDRE")
+  codeParrain String? @map("COD_PAR")
+  nomCandidat String @map("NOM_CAND")
+  prenomCandidat String @map("PREN_CAND")
+  cheminPhoto String? @map("CHEMIN_PHOTO")
+  cheminSymbole String? @map("CHEMIN_SYMBOLE")
+  
+  // Relations
+  parrain TblParrain? @relation(fields: [codeParrain], references: [codeParrain])
+  resultats TblResultat[]
+  
+  @@map("TBL_CANDIDAT")
+}
+
+// TBL_RESULTAT - Résultats
+model TblResultat {
+  id String @id @default(cuid())
+  numeroResultat String @unique @map("NUM_RESULTAT")
+  codeDepartement String @map("COD_DEPT")
+  codeSousPrefecture String @map("COD_SP")
+  codeCommune String @map("COD_COM")
+  codeLieuVote String @map("COD_LV")
+  numeroBureauVote String @map("NUMERO_BV")
+  numeroOrdreCandidat String @map("NUMERO_ORDRE")
+  score Int? @map("SCORE")
+  statutPublication String? @map("STAT_PUB")
+  
+  // Relations
+  departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement], onDelete: NoAction, onUpdate: NoAction)
+  sousPrefecture TblSp @relation(fields: [codeDepartement, codeSousPrefecture], references: [codeDepartement, codeSousPrefecture], onDelete: NoAction, onUpdate: NoAction)
+  commune TblCom @relation(fields: [codeDepartement, codeSousPrefecture, codeCommune], references: [codeDepartement, codeSousPrefecture, codeCommune], onDelete: NoAction, onUpdate: NoAction)
+  lieuVote TblLv @relation(fields: [codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote], references: [codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote], onDelete: NoAction, onUpdate: NoAction)
+  bureauVote TblBv @relation(fields: [codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote, numeroBureauVote], references: [codeDepartement, codeSousPrefecture, codeCommune, codeLieuVote, numeroBureauVote], onDelete: NoAction, onUpdate: NoAction)
+  candidat TblCandidat @relation(fields: [numeroOrdreCandidat], references: [numeroOrdre], onDelete: NoAction, onUpdate: NoAction)
+  
+  @@map("TBL_RESULTAT")
+}
+
+// TBL_PROCLAMATION_RESULTAT - Proclamation des Résultats
+model TblProclamationResultat {
+  id String @id @default(cuid())
+  numeroOrdreProclamation String @unique @map("NUMERO_ORDRE_PRO")
+  cheminResultatProclamation String? @map("CHEM_RESULTAT_PRO")
+  codeDepartement String? @map("COD_DEPT")
+  dateProclamation DateTime? @map("DATE_PRO")
+  heureProclamation String? @map("HEUR_PRO")
+  etatProclamation String? @map("ETA_PRO")
+  
+  // Relations
+  departement TblDept? @relation(fields: [codeDepartement], references: [codeDepartement])
+  
+  @@map("TBL_PROCLAMATION_RESULTAT")
+}
+
+// ===========================================
+// MODÈLES D'IMPORT EXCEL
+// ===========================================
+
+// Table générique pour l'import des fichiers Excel des CELs
+// Cette table sera utilisée temporairement lors de l'import de chaque fichier Excel
+model TblImportExcelCel {
+  id String @id @default(cuid())
+  codeCellule String @map("COD_CEL")
+  nomFichier String @map("NOM_FICHIER")
+  ordre String? @map("ORD")
+  referenceLieuVote String? @map("REF_LV")
+  libelleLieuVote String? @map("LIB_LV")
+  numeroBureauVote String? @map("NUMERO_BV")
+  populationHommes String? @map("POP_HOM")
+  populationFemmes String? @map("POP_FEM")
+  populationTotale String? @map("POP_TOTAL")
+  personnesAstreintes String? @map("PERS_ASTR")
+  votantsHommes String? @map("VOT_HOM")
+  votantsFemmes String? @map("VOT_FEM")
+  totalVotants String? @map("TOTAL_VOT")
+  tauxParticipation String? @map("TAUX_PART")
+  bulletinsNuls String? @map("BUL_NUL")
+  bulletinsBlancs String? @map("BUL_BLANC")
+  suffrageExprime String? @map("SUF_EXP")
+  score1 String? @map("SCORE_1")
+  score2 String? @map("SCORE_2")
+  score3 String? @map("SCORE_3")
+  score4 String? @map("SCORE_4")
+  score5 String? @map("SCORE_5")
+  colonneZero String? @map("COLONNE_ZERO")
+  statutImport String? @map("STATUT_IMPORT") // PENDING, PROCESSING, COMPLETED, ERROR
+  messageErreur String? @map("MESSAGE_ERREUR")
+  dateImport DateTime @default(now()) @map("DATE_IMPORT")
+  numeroUtilisateur String? @map("NUM_UTIL")
+  
+  // Relations
+  utilisateur User? @relation(fields: [numeroUtilisateur], references: [id])
+  
+  @@map("TBL_IMPORT_EXCEL_CEL")
+}
