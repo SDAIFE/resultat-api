@@ -31,6 +31,7 @@ model User {
   departements TblDept[]
   cellules    TblCel[]
   importsExcel TblImportExcelCel[]
+  publicationHistory DepartmentPublicationHistory[]
   
   @@map("users")
 }
@@ -96,6 +97,7 @@ model TblDept {
   bureauxVote TblBv[]
   resultats TblResultat[]
   proclamationResultats TblProclamationResultat[]
+  publicationHistory DepartmentPublicationHistory[]
   
   @@map("TBL_DEPT")
 }
@@ -199,7 +201,7 @@ model TblBv {
   tauxParticipation Float? @map("TAUX_PART")
   bulletinsNuls Int? @map("BUL_NUL")
   bulletinsBlancs Int? @map("BUL_BLANC")
-  
+  suffrageExprime String? @map("SUF_EXP")
   // Relations
   departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement], onDelete: NoAction, onUpdate: NoAction)
   sousPrefecture TblSp @relation(fields: [codeDepartement, codeSousPrefecture], references: [codeDepartement, codeSousPrefecture], onDelete: NoAction, onUpdate: NoAction)
@@ -307,8 +309,10 @@ model TblImportExcelCel {
   totalVotants String? @map("TOTAL_VOT")
   tauxParticipation String? @map("TAUX_PART")
   bulletinsNuls String? @map("BUL_NUL")
-  bulletinsBlancs String? @map("BUL_BLANC")
+  void String? @map("VOID")
   suffrageExprime String? @map("SUF_EXP")
+  controleSuffrageScore String? @map("CONT_SUF_SCORE")
+  bulletinsBlancs String? @map("BUL_BLANC")
   score1 String? @map("SCORE_1")
   score2 String? @map("SCORE_2")
   score3 String? @map("SCORE_3")
@@ -324,4 +328,24 @@ model TblImportExcelCel {
   utilisateur User? @relation(fields: [numeroUtilisateur], references: [id])
   
   @@map("TBL_IMPORT_EXCEL_CEL")
+}
+
+// ===========================================
+// MODÈLES DE PUBLICATION
+// ===========================================
+
+// Historique des actions de publication des départements
+model DepartmentPublicationHistory {
+  id String @id @default(cuid())
+  departmentId String @map("DEPARTMENT_ID")
+  action String @map("ACTION") // PUBLISH, CANCEL, IMPORT
+  userId String @map("USER_ID")
+  timestamp DateTime @default(now()) @map("TIMESTAMP")
+  details String? @map("DETAILS")
+  
+  // Relations
+  department TblDept @relation(fields: [departmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user User @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  
+  @@map("DEPARTMENT_PUBLICATION_HISTORY")
 }

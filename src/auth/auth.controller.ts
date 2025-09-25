@@ -72,6 +72,7 @@ export class AuthController {
         code: user.role.code,
       },
       departements: user.departements || [],
+      cellules: user.cellules || [],
       isActive: user.isActive,
     };
   }

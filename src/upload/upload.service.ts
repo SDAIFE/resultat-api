@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service';
 import { ExcelAnalyzerService } from './excel-analyzer.service';
 import { CsvAnalyzerService } from './csv-analyzer.service';
-import { UploadExcelDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus } from './dto/upload-excel.dto';
+import { UploadExcelDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus, CelDataResponseDto, CelDataDto, CelMetricsDto } from './dto/upload-excel.dto';
 import { ExcelParsedDataDto, ExcelValidationResultDto } from './dto/excel-data.dto';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -16,6 +16,21 @@ export class UploadService {
   ) {}
 
   /**
+   * Récupère les informations d'une CEL
+   */
+  async getCelInfo(codeCellule: string): Promise<{ codeCellule: string; libelleCellule: string } | null> {
+    const cel = await this.prisma.tblCel.findUnique({
+      where: { codeCellule },
+      select: {
+        codeCellule: true,
+        libelleCellule: true
+      }
+    });
+    
+    return cel;
+  }
+
+  /**
    * Traite un fichier Excel ou CSV uploadé
    */
   async processExcelFile(
@@ -23,7 +38,7 @@ export class UploadService {
     uploadDto: UploadExcelDto,
     userId: string
   ): Promise<ExcelImportResponseDto> {
-    const { codeCellule, nomFichier, nombreBv } = uploadDto;
+    const { codeCellule, nombreBv } = uploadDto;
 
     // Vérifier que la CEL existe
     const cel = await this.prisma.tblCel.findUnique({
@@ -71,7 +86,7 @@ export class UploadService {
       }
 
       // Insérer directement les données dans TblImportExcelCel
-      const processedData = await this.processExcelData(analysis.dataRows, mapping, codeCellule, nomFichier || path.basename(filePath), userId, analysis.lieuVoteMap);
+      const processedData = await this.processExcelData(analysis.dataRows, mapping, codeCellule, cel.libelleCellule, userId, analysis.lieuVoteMap);
 
       return this.formatImportResponse(null, analysis, mapping, validation, processedData);
 
@@ -205,6 +220,11 @@ export class UploadService {
           data: dataToInsert,
         });
 
+        // Alimenter la table TblBv si les données sont complètes
+        if (dataToInsert.referenceLieuVote && dataToInsert.numeroBureauVote) {
+          await this.insertBureauVote(dataToInsert);
+        }
+
         lignesReussies++;
       } catch (error) {
         lignesEchouees++;
@@ -246,11 +266,7 @@ export class UploadService {
 
     // Pour USER : seulement ses CELs assignées
     if (userRole === 'USER') {
-      where.utilisateur = {
-        some: {
-          numeroUtilisateur: userId
-        }
-      };
+      where.numeroUtilisateur = userId;
     }
     // Pour ADMIN et SADMIN : toutes les CELs
 
@@ -272,12 +288,180 @@ export class UploadService {
       this.prisma.tblCel.count({ where }),
     ]);
 
+    // Récupérer les données d'import pour chaque CEL
+    const celCodes = cels.map(cel => cel.codeCellule);
+    const importData = await this.prisma.tblImportExcelCel.findMany({
+      where: {
+        codeCellule: { in: celCodes }
+      },
+      select: {
+        codeCellule: true,
+        nomFichier: true,
+        dateImport: true
+      }
+    });
+
+    // Créer un map pour faciliter l'accès aux données d'import
+    const importDataMap = new Map();
+    importData.forEach(data => {
+      if (!importDataMap.has(data.codeCellule)) {
+        importDataMap.set(data.codeCellule, []);
+      }
+      importDataMap.get(data.codeCellule).push(data);
+    });
+
+    // Plus besoin de calculer le nombre de bureaux de vote
+    // car il est déjà disponible dans TblCel.nombreBureauxVote
+
     return {
-      imports: cels.map(cel => this.formatCelListResponse(cel)),
+      imports: cels.map(cel => this.formatCelListResponse(cel, importDataMap)),
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Récupère les données importées d'une CEL avec métriques
+   */
+  async getCelData(codeCellule: string): Promise<CelDataResponseDto> {
+    // Vérifier que la CEL existe
+    const cel = await this.prisma.tblCel.findUnique({
+      where: { codeCellule },
+      select: {
+        codeCellule: true,
+        libelleCellule: true
+      }
+    });
+
+    if (!cel) {
+      throw new NotFoundException('CEL non trouvée');
+    }
+
+    // Récupérer les données importées (exclure les champs spécifiés)
+    const importData = await this.prisma.tblImportExcelCel.findMany({
+      where: { codeCellule },
+      select: {
+        id: true,
+        codeCellule: true,
+        ordre: true,
+        referenceLieuVote: true,
+        libelleLieuVote: true,
+        numeroBureauVote: true,
+        populationHommes: true,
+        populationFemmes: true,
+        populationTotale: true,
+        personnesAstreintes: true,
+        votantsHommes: true,
+        votantsFemmes: true,
+        totalVotants: true,
+        tauxParticipation: true,
+        bulletinsNuls: true,
+        suffrageExprime: true,
+        bulletinsBlancs: true,
+        score1: true,
+        score2: true,
+        score3: true,
+        score4: true,
+        score5: true
+      },
+      orderBy: { ordre: 'asc' }
+    });
+
+    // Calculer les métriques
+    const metrics = this.calculateCelMetrics(importData);
+
+    return {
+      codeCellule: cel.codeCellule,
+      libelleCellule: cel.libelleCellule,
+      totalBureaux: importData.length,
+      data: importData.map(item => this.formatCelDataItem(item)),
+      metrics
+    };
+  }
+
+  /**
+   * Calcule les métriques d'une CEL
+   */
+  private calculateCelMetrics(data: any[]): CelMetricsDto {
+    let inscritsTotal = 0;
+    let inscritsHommes = 0;
+    let inscritsFemmes = 0;
+    let votantsTotal = 0;
+    let votantsHommes = 0;
+    let votantsFemmes = 0;
+    let suffrageExprime = 0;
+
+    data.forEach(item => {
+      // Inscrits
+      const popTotal = this.parseNumber(item.populationTotale) || 0;
+      const popHommes = this.parseNumber(item.populationHommes) || 0;
+      const popFemmes = this.parseNumber(item.populationFemmes) || 0;
+      
+      inscritsTotal += popTotal;
+      inscritsHommes += popHommes;
+      inscritsFemmes += popFemmes;
+
+      // Votants
+      const votTotal = this.parseNumber(item.totalVotants) || 0;
+      const votHommes = this.parseNumber(item.votantsHommes) || 0;
+      const votFemmes = this.parseNumber(item.votantsFemmes) || 0;
+      
+      votantsTotal += votTotal;
+      votantsHommes += votHommes;
+      votantsFemmes += votFemmes;
+
+      // Suffrage exprimé
+      suffrageExprime += this.parseNumber(item.suffrageExprime) || 0;
+    });
+
+    // Calculer le taux de participation global
+    const tauxParticipation = inscritsTotal > 0 ? (votantsTotal / inscritsTotal) * 100 : 0;
+
+    return {
+      inscrits: {
+        total: inscritsTotal,
+        hommes: inscritsHommes,
+        femmes: inscritsFemmes
+      },
+      votants: {
+        total: votantsTotal,
+        hommes: votantsHommes,
+        femmes: votantsFemmes
+      },
+      tauxParticipation: Math.round(tauxParticipation * 100) / 100,
+      suffrageExprime
+    };
+  }
+
+  /**
+   * Formate un élément de données de CEL
+   */
+  private formatCelDataItem(item: any): CelDataDto {
+    return {
+      id: item.id,
+      codeCellule: item.codeCellule,
+      ordre: item.ordre || '',
+      referenceLieuVote: item.referenceLieuVote || '',
+      libelleLieuVote: item.libelleLieuVote || '',
+      numeroBureauVote: item.numeroBureauVote || '',
+      populationHommes: item.populationHommes || '',
+      populationFemmes: item.populationFemmes || '',
+      populationTotale: item.populationTotale || '',
+      personnesAstreintes: item.personnesAstreintes || '',
+      votantsHommes: item.votantsHommes || '',
+      votantsFemmes: item.votantsFemmes || '',
+      totalVotants: item.totalVotants || '',
+      tauxParticipation: item.tauxParticipation || '',
+      bulletinsNuls: item.bulletinsNuls || '',
+      suffrageExprime: item.suffrageExprime || '',
+      bulletinsBlancs: item.bulletinsBlancs || '',
+      score1: item.score1 || '',
+      score2: item.score2 || '',
+      score3: item.score3 || '',
+      score4: item.score4 || '',
+      score5: item.score5 || ''
     };
   }
 
@@ -290,14 +474,9 @@ export class UploadService {
     
     // Pour USER : seulement ses CELs assignées
     if (userRole === 'USER' && userId) {
-      where.utilisateur = {
-        some: {
-          numeroUtilisateur: userId
-        }
-      };
+      where.numeroUtilisateur = userId;
     }
     // Pour ADMIN et SADMIN : toutes les CELs (pas de filtre)
-
     const [
       totalCels,
       celsImportees,
@@ -323,6 +502,7 @@ export class UploadService {
         _count: { etatResultatCellule: true },
       }),
     ]);
+    
 
     const tauxImport = totalCels > 0 ? (celsImportees / totalCels) * 100 : 0;
 
@@ -420,25 +600,216 @@ export class UploadService {
   }
 
   /**
+   * Subdivise le referenceLieuVote pour extraire les codes géographiques
+   */
+  private parseReferenceLieuVote(referenceLieuVote: string): {
+    codeDepartement: string;
+    codeSousPrefecture: string;
+    codeCommune: string;
+    codeLieuVote: string;
+  } | null {
+    if (!referenceLieuVote || referenceLieuVote.length < 12) {
+      return null;
+    }
+
+    // Format attendu: 001001001001 (12 chiffres)
+    // 001 = codeDepartement (3 premiers)
+    // 001 = codeSousPrefecture (3 suivants)
+    // 001 = codeCommune (3 suivants)
+    // 001 = codeLieuVote (3 restants)
+    
+    const codeDepartement = referenceLieuVote.substring(0, 3);
+    const codeSousPrefecture = referenceLieuVote.substring(3, 6);
+    const codeCommune = referenceLieuVote.substring(6, 9);
+    const codeLieuVote = referenceLieuVote.substring(9, 12);
+
+    return {
+      codeDepartement,
+      codeSousPrefecture,
+      codeCommune,
+      codeLieuVote
+    };
+  }
+
+  /**
+   * Convertit une chaîne en nombre, retourne null si invalide
+   */
+  private parseNumber(value: string | null | undefined): number | null {
+    if (!value || value === '') return null;
+    
+    // Nettoyer la valeur (enlever les virgules, espaces, etc.)
+    const cleaned = value.toString().replace(/[,\s]/g, '');
+    const parsed = parseFloat(cleaned);
+    
+    return isNaN(parsed) ? null : Math.round(parsed);
+  }
+
+  /**
+   * Convertit un pourcentage en nombre décimal
+   */
+  private parsePercentage(value: string | null | undefined): number | null {
+    if (!value || value === '') return null;
+    
+    // Nettoyer la valeur (enlever le % et les espaces)
+    const cleaned = value.toString().replace(/[%\s]/g, '');
+    const parsed = parseFloat(cleaned);
+    
+    return isNaN(parsed) ? null : parsed;
+  }
+
+  /**
+   * Insère un bureau de vote dans la table TblBv
+   */
+  private async insertBureauVote(importData: any): Promise<void> {
+    try {
+      // Parser le referenceLieuVote
+      const geoData = this.parseReferenceLieuVote(importData.referenceLieuVote);
+      if (!geoData) {
+        console.warn(`Impossible de parser referenceLieuVote: ${importData.referenceLieuVote}`);
+        return;
+      }
+
+      // Vérifier que le lieu de vote existe dans TblLv
+      const lieuVote = await this.prisma.tblLv.findUnique({
+        where: {
+          codeDepartement_codeSousPrefecture_codeCommune_codeLieuVote: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune,
+            codeLieuVote: geoData.codeLieuVote
+          }
+        }
+      });
+
+      if (!lieuVote) {
+        console.warn(`⚠️ Lieu de vote non trouvé: ${geoData.codeDepartement}-${geoData.codeSousPrefecture}-${geoData.codeCommune}-${geoData.codeLieuVote}`);
+        console.warn(`   Référence originale: ${importData.referenceLieuVote}`);
+        
+        // Chercher des lieux de vote similaires pour diagnostic
+        const similarLv = await this.prisma.tblLv.findMany({
+          where: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune
+          },
+          take: 3
+        });
+        
+        if (similarLv.length > 0) {
+          console.warn(`   Lieux de vote similaires trouvés:`);
+          similarLv.forEach(lv => {
+            console.warn(`     - ${lv.codeLieuVote}: ${lv.libelleLieuVote}`);
+          });
+        }
+        
+        return;
+      }
+
+      // Vérifier si le bureau de vote existe déjà
+      const existingBv = await this.prisma.tblBv.findUnique({
+        where: {
+          codeDepartement_codeSousPrefecture_codeCommune_codeLieuVote_numeroBureauVote: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune,
+            codeLieuVote: geoData.codeLieuVote,
+            numeroBureauVote: importData.numeroBureauVote
+          }
+        }
+      });
+
+      if (existingBv) {
+        // Mettre à jour le bureau de vote existant
+        await this.prisma.tblBv.update({
+          where: { id: existingBv.id },
+          data: {
+            inscrits: this.parseNumber(importData.populationTotale),
+            populationHommes: this.parseNumber(importData.populationHommes),
+            populationFemmes: this.parseNumber(importData.populationFemmes),
+            personnesAstreintes: this.parseNumber(importData.personnesAstreintes),
+            votantsHommes: this.parseNumber(importData.votantsHommes),
+            votantsFemmes: this.parseNumber(importData.votantsFemmes),
+            totalVotants: this.parseNumber(importData.totalVotants),
+            tauxParticipation: this.parsePercentage(importData.tauxParticipation),
+            bulletinsNuls: this.parseNumber(importData.bulletinsNuls),
+            bulletinsBlancs: this.parseNumber(importData.bulletinsBlancs),
+            suffrageExprime: importData.suffrageExprime
+          }
+        });
+        console.log(`📝 Bureau de vote mis à jour: ${geoData.codeDepartement}-${geoData.codeSousPrefecture}-${geoData.codeCommune}-${geoData.codeLieuVote}-${importData.numeroBureauVote}`);
+      } else {
+        // Créer un nouveau bureau de vote
+        await this.prisma.tblBv.create({
+          data: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune,
+            codeLieuVote: geoData.codeLieuVote,
+            numeroBureauVote: importData.numeroBureauVote,
+            inscrits: this.parseNumber(importData.populationTotale),
+            populationHommes: this.parseNumber(importData.populationHommes),
+            populationFemmes: this.parseNumber(importData.populationFemmes),
+            personnesAstreintes: this.parseNumber(importData.personnesAstreintes),
+            votantsHommes: this.parseNumber(importData.votantsHommes),
+            votantsFemmes: this.parseNumber(importData.votantsFemmes),
+            totalVotants: this.parseNumber(importData.totalVotants),
+            tauxParticipation: this.parsePercentage(importData.tauxParticipation),
+            bulletinsNuls: this.parseNumber(importData.bulletinsNuls),
+            bulletinsBlancs: this.parseNumber(importData.bulletinsBlancs),
+            suffrageExprime: importData.suffrageExprime
+          }
+        });
+        console.log(`✅ Bureau de vote créé: ${geoData.codeDepartement}-${geoData.codeSousPrefecture}-${geoData.codeCommune}-${geoData.codeLieuVote}-${importData.numeroBureauVote}`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Erreur lors de l'insertion du bureau de vote:`, error);
+      // Ne pas faire échouer l'import principal pour une erreur de bureau de vote
+    }
+  }
+
+  /**
    * Formate la réponse de liste des CELs
    */
-  private formatCelListResponse(cel: any): ExcelImportResponseDto {
+  private formatCelListResponse(
+    cel: any, 
+    importDataMap?: Map<string, any[]>
+  ): ExcelImportResponseDto {
+    // Récupérer les données d'import pour cette CEL
+    const celImportData = importDataMap?.get(cel.codeCellule) || [];
+    const totalLignesImportees = celImportData.length;
+    
+    // Récupérer la date d'import la plus récente
+    const dateImport = celImportData.length > 0 
+      ? celImportData.reduce((latest, data) => 
+          data.dateImport > latest ? data.dateImport : latest, 
+          celImportData[0].dateImport
+        )
+      : cel.updatedAt || cel.createdAt;
+    
+    // Utiliser le nom de la CEL comme nom de fichier
+    const nomFichier = cel.libelleCellule;
+    
+    // Utiliser le nombre de bureaux de vote directement depuis la table TblCel
+    let nombreBureauxVote = cel.nombreBureauxVote || 0;
+
     return {
       id: cel.id,
       codeCellule: cel.codeCellule,
-      nomFichier: cel.libelleCellule,
+      nomFichier: nomFichier,
       statutImport: cel.etatResultatCellule === 'I' ? ImportStatus.COMPLETED : 
                    cel.etatResultatCellule === 'P' ? ImportStatus.COMPLETED : 
                    ImportStatus.PENDING,
       messageErreur: undefined,
-      dateImport: cel.updatedAt || cel.createdAt,
-      nombreLignesImportees: cel._count?.lieuxVote || 0,
+      dateImport: dateImport,
+      nombreLignesImportees: totalLignesImportees,
       nombreLignesEnErreur: 0,
+      nombreBureauxVote: nombreBureauxVote,
       details: {
         headers: [],
         colonnesMappees: {},
-        lignesTraitees: cel._count?.lieuxVote || 0,
-        lignesReussies: cel._count?.lieuxVote || 0,
+        lignesTraitees: totalLignesImportees,
+        lignesReussies: totalLignesImportees,
         lignesEchouees: 0,
       },
     };

@@ -14,6 +14,11 @@ export class AuthResponseDto {
     departements: {
       codeDepartement: string;
     }[];
+    cellules: {
+      id: string;
+      codeCellule: string;
+      libelleCellule: string;
+    }[];
     isActive: boolean;
   };
 }

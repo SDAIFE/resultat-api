@@ -153,10 +153,14 @@ export class ExcelAnalyzerService {
         mapping[col] = { field: 'tauxParticipation', index, type: 'direct' };
       } else if (colUpper === 'BULLETINS NULS') {
         mapping[col] = { field: 'bulletinsNuls', index, type: 'direct' };
-      } else if (colUpper === 'BULLETINS BLANCS') {
-        mapping[col] = { field: 'bulletinsBlancs', index, type: 'direct' };
+      } else if (colUpper === 'VOID') {
+        mapping[col] = { field: 'void', index, type: 'direct' };
       } else if (colUpper === 'SUFFR. EXPRIMES') {
         mapping[col] = { field: 'suffrageExprime', index, type: 'direct' };
+      } else if (colUpper === 'CONTRLE SUFFAGES ET SCORES' || colUpper === 'CONT_SUF_SCORE') {
+        mapping[col] = { field: 'controleSuffrageScore', index, type: 'direct' };
+      } else if (colUpper === 'BULLETINS BLANCS') {
+        mapping[col] = { field: 'bulletinsBlancs', index, type: 'direct' };
       }
       // Mapping pour les scores des candidats
       else if (colUpper === 'GP-PAIX LAGOU ADJOUA HENRIETTE') {

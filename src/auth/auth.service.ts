@@ -31,6 +31,13 @@ export class AuthService {
           select: {
             codeDepartement: true
           }
+        },
+        cellules: {
+          select: {
+            id: true,
+            codeCellule: true,
+            libelleCellule: true
+          }
         }
       },
     });
@@ -60,6 +67,7 @@ export class AuthService {
           code: user.role.code,
         },
         departements: user.departements || [],
+        cellules: user.cellules || [],
         isActive: user.isActive,
       },
     };
@@ -105,7 +113,16 @@ export class AuthService {
         role: true,
         departements: {
           select: {
-            codeDepartement: true
+            id:true,
+            codeDepartement: true,
+            libelleDepartement:true
+          }
+        },
+        cellules:{
+          select:{
+            id:true,
+            codeCellule:true,
+            libelleCellule:true
           }
         }
       },
@@ -126,6 +143,7 @@ export class AuthService {
           code: user.role.code,
         },
         departements: user.departements || [],
+        cellules: user.cellules || [],
         isActive: user.isActive,
       },
     };
@@ -150,6 +168,13 @@ export class AuthService {
               departements: {
                 select: {
                   codeDepartement: true
+                }
+              },
+              cellules: {
+                select: {
+                  id: true,
+                  codeCellule: true,
+                  libelleCellule: true
                 }
               }
             } 
@@ -263,6 +288,13 @@ export class AuthService {
           select: {
             codeDepartement: true
           }
+        },
+        cellules: {
+          select: {
+            id: true,
+            codeCellule: true,
+            libelleCellule: true
+          }
         }
       },
     });
@@ -278,6 +310,7 @@ export class AuthService {
       lastName: user.lastName,
       role: user.role,
       departements: user.departements || [],
+      cellules: user.cellules || [],
       isActive: user.isActive,
     };
   }

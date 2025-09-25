@@ -11,6 +11,7 @@ import { UploadModule } from './upload/upload.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { MonitoringModule } from './monitoring/monitoring.module';
 import { RolesModule } from './roles/roles.module';
+import { PublicationModule } from './publication/publication.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { RolesModule } from './roles/roles.module';
     DashboardModule,
     MonitoringModule,
     RolesModule,
+    PublicationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

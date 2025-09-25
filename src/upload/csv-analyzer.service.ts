@@ -22,15 +22,20 @@ export class CsvAnalyzerService {
       const metadataLines = lines.slice(0, 11);
       const metadata = this.extractMetadata(metadataLines);
       
-      // Les en-têtes sont sur la ligne 12 (index 11)
-      const headerLine = lines[11]; // Index 11 = ligne 12
-      const headers = this.parseCsvLine(headerLine);
+      // Les en-têtes sont sur les lignes 12-13 (index 11-12)
+      const headerLine1 = lines[11]; // Index 11 = ligne 12
+      const headerLine2 = lines[12]; // Index 12 = ligne 13 (noms des candidats)
+      const headers1 = this.parseCsvLine(headerLine1);
+      const headers2 = this.parseCsvLine(headerLine2);
+      
+      // Combiner les en-têtes des deux lignes
+      const combinedHeaders = this.combineHeaders(headers1, headers2);
       
       // Nettoyer les headers et créer des noms de colonnes plus clairs
-      const cleanedHeaders = this.cleanHeaders(headers);
+      const cleanedHeaders = this.cleanHeaders(combinedHeaders);
       
-      // Les données commencent à partir de la ligne 13 (index 12)
-      const dataLines = lines.slice(12);
+      // Les données commencent à partir de la ligne 14 (index 13)
+      const dataLines = lines.slice(13);
       const dataRows = dataLines
         .filter(line => line.trim() && !line.startsWith(';')) // Ignorer les lignes vides et les lignes de séparateurs
         .map(line => this.parseCsvLine(line));
@@ -39,7 +44,7 @@ export class CsvAnalyzerService {
       recommendations.push(`Code CEL détecté: ${metadata.codeCel}`);
       recommendations.push(`Département: ${metadata.departement}`);
       recommendations.push(`Nombre de BV: ${metadata.nombreBv}`);
-      recommendations.push(`Headers trouvés: ${headers.length} colonnes`);
+      recommendations.push(`Headers trouvés: ${cleanedHeaders.length} colonnes`);
       recommendations.push(`Données extraites: ${dataRows.length} lignes`);
       
       return {
@@ -166,21 +171,25 @@ export class CsvAnalyzerService {
         mapping[col] = { field: 'tauxParticipation', index, type: 'direct' };
       } else if (colUpper === 'BULLETINS_NULS') {
         mapping[col] = { field: 'bulletinsNuls', index, type: 'direct' };
-      } else if (colUpper === 'BULLETINS_BLANCS') {
-        mapping[col] = { field: 'bulletinsBlancs', index, type: 'direct' };
+      } else if (colUpper === 'VOID') {
+        mapping[col] = { field: 'void', index, type: 'direct' };
       } else if (colUpper === 'SUFFR_EXPRIMES') {
         mapping[col] = { field: 'suffrageExprime', index, type: 'direct' };
+      } else if (colUpper === 'CONT_SUF_SCORE' || colUpper === 'CONTRLE SUFFAGES ET SCORES') {
+        mapping[col] = { field: 'controleSuffrageScore', index, type: 'direct' };
+      } else if (colUpper === 'BULLETINS_BLANCS') {
+        mapping[col] = { field: 'bulletinsBlancs', index, type: 'direct' };
       }
-      // Mapping pour les scores des candidats
-      else if (colUpper === 'SCORE_1') {
+      // Mapping pour les scores des candidats (noms complets)
+      else if (colUpper.includes('LAGOU ADJOUA HENRIETTE')) {
         mapping[col] = { field: 'score1', index, type: 'direct' };
-      } else if (colUpper === 'SCORE_2') {
+      } else if (colUpper.includes('BILLON JEAN-LOUIS EUGENE')) {
         mapping[col] = { field: 'score2', index, type: 'direct' };
-      } else if (colUpper === 'SCORE_3') {
+      } else if (colUpper.includes('EHIVET SIMONE') && colUpper.includes('GBAGBO')) {
         mapping[col] = { field: 'score3', index, type: 'direct' };
-      } else if (colUpper === 'SCORE_4') {
+      } else if (colUpper.includes('DON-MELLO SENIN AHOUA JACOB')) {
         mapping[col] = { field: 'score4', index, type: 'direct' };
-      } else if (colUpper === 'SCORE_5') {
+      } else if (colUpper.includes('ALASSANE OUATTARA')) {
         mapping[col] = { field: 'score5', index, type: 'direct' };
       }
     });
@@ -207,6 +216,32 @@ export class CsvAnalyzerService {
     });
     
     return lieuVoteMap;
+  }
+
+  /**
+   * Combine les en-têtes des deux lignes (ligne 12 + ligne 13)
+   */
+  private combineHeaders(headers1: string[], headers2: string[]): string[] {
+    const combined: string[] = [];
+    const maxLength = Math.max(headers1.length, headers2.length);
+    
+    for (let i = 0; i < maxLength; i++) {
+      const header1 = headers1[i] || '';
+      const header2 = headers2[i] || '';
+      
+      if (header1 && header2) {
+        // Combiner les deux en-têtes
+        combined[i] = `${header1} ${header2}`.trim();
+      } else if (header1) {
+        combined[i] = header1;
+      } else if (header2) {
+        combined[i] = header2;
+      } else {
+        combined[i] = '';
+      }
+    }
+    
+    return combined;
   }
 
   /**
@@ -242,12 +277,13 @@ export class CsvAnalyzerService {
       'BULLETINS_NULS',       // 21: Bulletins nuls
       'VOID',                 // 22: Void
       'SUFFR_EXPRIMES',       // 23: Suffrages exprimés
-      'BULLETINS_BLANCS',     // 24: Bulletins blancs
-      'SCORE_1',              // 25: Score candidat 1 (GP-PAIX)
-      'SCORE_2',              // 26: Score candidat 2 (CODE)
-      'SCORE_3',              // 27: Score candidat 3 (MGC)
-      'SCORE_4',              // 28: Score candidat 4 (INDEPENDANT)
-      'SCORE_5',              // 29: Score candidat 5 (RHDP)
+      'CONTRLE SUFFAGES ET SCORES', // 24: Contrôle suffrages et scores
+      'BULLETINS_BLANCS',     // 25: Bulletins blancs
+      'LAGOU ADJOUA HENRIETTE', // 26: Score candidat 1 (GP-PAIX)
+      'BILLON JEAN-LOUIS EUGENE', // 27: Score candidat 2 (CODE)
+      'EHIVET SIMONE ÉPOUSE GBAGBO', // 28: Score candidat 3 (MGC)
+      'DON-MELLO SENIN AHOUA JACOB', // 29: Score candidat 4 (INDEPENDANT)
+      'ALASSANE OUATTARA',    // 30: Score candidat 5 (RHDP)
     ];
 
     // Utiliser le mapping ou créer des noms génériques

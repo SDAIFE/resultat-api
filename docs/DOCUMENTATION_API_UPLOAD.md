@@ -34,16 +34,25 @@ Toutes les routes nécessitent :
 
 | Paramètre | Type | Requis | Description |
 |-----------|------|--------|-------------|
-| `file` | File | ✅ | Fichier Excel (.xlsx, .xls, .xlsm) |
+| `file` | File | ✅ | Fichier Excel (.xlsx, .xls, .xlsm) ou CSV (.csv) |
 | `codeCellule` | string | ✅ | Code de la Cellule Electorale Locale |
 | `nomFichier` | string | ❌ | Nom personnalisé pour le fichier |
 | `nombreBv` | number | ❌ | Nombre de bureaux de vote attendus |
+| `keepFile` | string | ❌ | Conserver le fichier dans `/uploads/` (défaut: `true`) |
 
 #### Contraintes du fichier
 
-- **Types acceptés :** `.xlsx`, `.xls`, `.xlsm`
+- **Types acceptés :** `.xlsx`, `.xls`, `.xlsm`, `.csv`
 - **Taille maximale :** 10MB
 - **Format :** Fichier Excel avec en-têtes à partir de la ligne 12
+
+#### Gestion des fichiers
+
+- **Conservation par défaut :** Les fichiers sont conservés dans le dossier `/uploads/`
+- **Paramètre `keepFile` :** 
+  - `true` (défaut) : Conserver le fichier après traitement
+  - `false` : Supprimer le fichier après traitement réussi
+- **En cas d'erreur :** Le fichier est toujours supprimé
 
 #### Réponse de succès
 
@@ -255,6 +264,18 @@ Le fichier Excel suit un format spécifique pour les fichiers CEL (Cellule Elect
 - **Données** : Extraction à partir de la **ligne 12**
 - **Mapping automatique** : Les colonnes sont mappées selon leur nom dans les en-têtes
 
+#### **Alimentation des tables :**
+
+- **TblImportExcelCel** : Données brutes du fichier Excel/CSV
+- **TblBv** : Données transformées des bureaux de vote
+- **Parsing automatique** : `referenceLieuVote` subdivisé en codes géographiques
+
+#### **Structure spéciale CSV :**
+- **Ligne 12** : En-têtes principaux des colonnes
+- **Ligne 13** : Noms des candidats pour les colonnes de scores
+- **Combinaison automatique** : Les en-têtes des lignes 12 et 13 sont combinés
+- **Données** : Commencent à partir de la ligne 14
+
 #### **Colonnes attendues (mapping automatique) :**
 
 | Nom d'en-tête Excel | Champ DB | Requis | Type | Description |
@@ -270,8 +291,9 @@ Le fichier Excel suit un format spécifique pour les fichiers CEL (Cellule Elect
 | `TOTAL` (col 18) | `totalVotants` | ❌ | number | Total des votants |
 | `TAUX DE PARTICIPATION` | `tauxParticipation` | ❌ | number | Taux de participation (%) |
 | `BULLETINS NULS` | `bulletinsNuls` | ❌ | number | Bulletins nuls |
-| `BULLETINS BLANCS` | `bulletinsBlancs` | ❌ | number | Bulletins blancs |
 | `SUFFR. EXPRIMES` | `suffrageExprime` | ❌ | number | Suffrage exprimé |
+| `CONTRÔLE SUFFAGES ET SCORES` | `controleSuffrageScore` | ❌ | string | Contrôle suffrages et scores |
+| `BULLETINS BLANCS` | `bulletinsBlancs` | ❌ | number | Bulletins blancs |
 | `GP-PAIX LAGOU ADJOUA HENRIETTE` | `score1` | ❌ | number | Score candidat 1 |
 | `CODE BILLON JEAN-LOUIS EUGENE` | `score2` | ❌ | number | Score candidat 2 |
 | `MGC EHIVET SIMONE ÉPOUSE GBAGBO` | `score3` | ❌ | number | Score candidat 3 |
@@ -306,6 +328,22 @@ Le système extrait automatiquement :
 - Colonnes manquantes : Signalées dans `colonnesManquantes`
 - Colonnes inconnues : Signalées dans `colonnesInconnues`
 - Mapping automatique : Basé sur les noms d'en-têtes exacts
+
+**⚠️ Important - Décalement des colonnes :**
+La colonne `CONTRÔLE SUFFAGES ET SCORES` est présente entre `SUFFR. EXPRIMES` et `BULLETINS BLANCS` dans les fichiers CSV/Excel. Si cette colonne n'est pas correctement mappée, cela cause un décalement de toutes les colonnes suivantes (scores des candidats). Le système gère automatiquement ce mapping pour éviter les erreurs de décalement.
+
+#### **Parsing des codes géographiques :**
+
+Le champ `referenceLieuVote` (ex: `001001001001`) est automatiquement subdivisé :
+
+| Position | Longueur | Code | Description |
+|----------|----------|------|-------------|
+| 0-2 | 3 | `codeDepartement` | Code du département |
+| 3-5 | 3 | `codeSousPrefecture` | Code de la sous-préfecture |
+| 6-8 | 3 | `codeCommune` | Code de la commune |
+| 9-11 | 3 | `codeLieuVote` | Code du lieu de vote |
+
+**Exemple :** `001001001001` → Département: 001, Sous-préfecture: 001, Commune: 001, Lieu de vote: 001
 
 ---
 

@@ -9,11 +9,12 @@ import {
   Body,
   ParseIntPipe,
   DefaultValuePipe,
-  ParseEnumPipe
+  ParseEnumPipe,
+  Param
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
-import { UploadExcelDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus } from './dto/upload-excel.dto';
+import { UploadExcelDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus, CelDataResponseDto } from './dto/upload-excel.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -51,13 +52,14 @@ export class UploadController {
       }
     },
     limits: {
-      fileSize: 10 * 1024 * 1024, // 10MB
+      fileSize: 50 * 1024 * 1024, // 50MB
     },
   }))
   async uploadExcel(
     @UploadedFile() file: Express.Multer.File,
     @Body() uploadDto: UploadExcelDto,
-    @CurrentUser() user: any
+    @CurrentUser() user: any,
+    @Query('keepFile', new DefaultValuePipe('true')) keepFile: string
   ): Promise<ExcelImportResponseDto> {
     if (!file) {
       throw new Error('Aucun fichier fourni');
@@ -69,9 +71,16 @@ export class UploadController {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    // Générer un nom de fichier unique
+    // Récupérer le nom de la CEL pour le nom de fichier
+    const cel = await this.uploadService.getCelInfo(uploadDto.codeCellule);
+    if (!cel) {
+      throw new Error('CEL non trouvée');
+    }
+    
+    // Générer un nom de fichier basé sur le nom de la CEL
     const fileExtension = path.extname(file.originalname);
-    const fileName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExtension}`;
+    const celName = cel.libelleCellule.replace(/[^a-zA-Z0-9]/g, '_'); // Nettoyer le nom pour le système de fichiers
+    const fileName = `${celName}_${Date.now()}${fileExtension}`;
     const filePath = path.join(uploadsDir, fileName);
 
     // Sauvegarder le fichier
@@ -84,16 +93,23 @@ export class UploadController {
       // Traiter le fichier
       const result = await this.uploadService.processExcelFile(filePath, uploadDto, user.id);
       
-      // Nettoyer le fichier temporaire
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+      // Gérer la conservation du fichier selon le paramètre
+      const shouldKeepFile = keepFile.toLowerCase() === 'true';
+      if (shouldKeepFile) {
+        console.log(`📁 Fichier sauvegardé: ${filePath}`);
+      } else {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log(`🗑️ Fichier supprimé après traitement: ${filePath}`);
+        }
       }
 
       return result;
     } catch (error) {
-      // Nettoyer le fichier temporaire en cas d'erreur
+      // Nettoyer le fichier temporaire en cas d'erreur seulement
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
+        console.log(`🗑️ Fichier supprimé après erreur: ${filePath}`);
       }
       throw error;
     }
@@ -109,7 +125,7 @@ export class UploadController {
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: any,
   ): Promise<ExcelImportListResponseDto> {
-    return this.uploadService.getImports(page, limit, user.id, user.role);
+    return this.uploadService.getImports(page, limit, user.id, user.role?.code);
   }
 
   /**
@@ -118,7 +134,7 @@ export class UploadController {
   @Get('stats')
   @Roles('SADMIN', 'ADMIN', 'USER')
   async getStats(@CurrentUser() user: any): Promise<ExcelImportStatsDto> {
-    return this.uploadService.getImportStats(user.id, user.role);
+    return this.uploadService.getImportStats(user.id, user.role?.code);
   }
 
   /**
@@ -147,5 +163,17 @@ export class UploadController {
     @CurrentUser() user: any,
   ): Promise<ExcelImportListResponseDto> {
     return this.uploadService.getImports(page, limit, user.id, user.role);
+  }
+
+  /**
+   * Récupérer les données importées d'une CEL avec métriques
+   */
+  @Get('cel/:codeCellule/data')
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  async getCelData(
+    @Param('codeCellule') codeCellule: string,
+    @CurrentUser() user: any,
+  ): Promise<CelDataResponseDto> {
+    return this.uploadService.getCelData(codeCellule);
   }
 }

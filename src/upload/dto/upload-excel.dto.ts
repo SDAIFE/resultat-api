@@ -29,6 +29,7 @@ export class ExcelImportResponseDto {
   dateImport: Date;
   nombreLignesImportees: number;
   nombreLignesEnErreur: number;
+  nombreBureauxVote?: number;
   details: {
     headers: string[];
     colonnesMappees: Record<string, string>;
@@ -56,4 +57,52 @@ export class ExcelImportStatsDto {
   tauxReussite: number;
   importsParCel: Record<string, number>;
   importsParStatut: Record<ImportStatus, number>;
+}
+
+export class CelDataDto {
+  id: string;
+  codeCellule: string;
+  ordre: string;
+  referenceLieuVote: string;
+  libelleLieuVote: string;
+  numeroBureauVote: string;
+  populationHommes: string;
+  populationFemmes: string;
+  populationTotale: string;
+  personnesAstreintes: string;
+  votantsHommes: string;
+  votantsFemmes: string;
+  totalVotants: string;
+  tauxParticipation: string;
+  bulletinsNuls: string;
+  suffrageExprime: string;
+  bulletinsBlancs: string;
+  score1: string;
+  score2: string;
+  score3: string;
+  score4: string;
+  score5: string;
+}
+
+export class CelMetricsDto {
+  inscrits: {
+    total: number;
+    hommes: number;
+    femmes: number;
+  };
+  votants: {
+    total: number;
+    hommes: number;
+    femmes: number;
+  };
+  tauxParticipation: number;
+  suffrageExprime: number;
+}
+
+export class CelDataResponseDto {
+  codeCellule: string;
+  libelleCellule: string;
+  totalBureaux: number;
+  data: CelDataDto[];
+  metrics: CelMetricsDto;
 }
