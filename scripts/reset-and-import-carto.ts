@@ -1,9 +1,92 @@
 import { PrismaClient } from '@prisma/client';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const prisma = new PrismaClient();
 
+/**
+ * Script combiné : Réinitialisation + Import des données cartographiques
+ * 
+ * Ce script :
+ * 1. Génère le client Prisma (après les modifications du schéma)
+ * 2. Réinitialise la base de données (préserve users, roles, sessions)
+ * 3. Importe toutes les données cartographiques dans l'ordre correct
+ */
+
+async function generatePrismaClient() {
+  console.log('🔧 Génération du client Prisma...');
+  try {
+    execSync('npx prisma generate', { stdio: 'inherit' });
+    console.log('✅ Client Prisma généré avec succès');
+  } catch (error) {
+    console.error('❌ Erreur lors de la génération du client Prisma:', error);
+    throw error;
+  }
+}
+
+async function resetDatabase() {
+  console.log('🔄 Réinitialisation de la base de données...');
+  
+  try {
+    // Ordre de suppression important : d'abord les tables avec des clés étrangères
+    console.log('🗑️  Suppression des données de publication...');
+    await prisma.departmentPublicationHistory.deleteMany();
+    
+    console.log('🗑️  Suppression des données d\'import Excel...');
+    await prisma.tblImportExcelCel.deleteMany();
+    
+    console.log('🗑️  Suppression des résultats de proclamation...');
+    await prisma.tblProclamationResultat.deleteMany();
+    
+    console.log('🗑️  Suppression des résultats électoraux...');
+    await prisma.tblResultat.deleteMany();
+    
+    console.log('🗑️  Suppression des candidats...');
+    await prisma.tblCandidat.deleteMany();
+    
+    console.log('🗑️  Suppression des parrains...');
+    await prisma.tblParrain.deleteMany();
+    
+    console.log('🗑️  Suppression des bureaux de vote...');
+    await prisma.tblBv.deleteMany();
+    
+    console.log('🗑️  Suppression des lieux de vote...');
+    await prisma.tblLv.deleteMany();
+    
+    console.log('🗑️  Suppression des cellules électorales...');
+    await prisma.tblCel.deleteMany();
+    
+    console.log('🗑️  Suppression des communes...');
+    await prisma.tblCom.deleteMany();
+    
+    console.log('🗑️  Suppression des sous-préfectures...');
+    await prisma.tblSp.deleteMany();
+    
+    console.log('🗑️  Suppression des départements...');
+    await prisma.tblDept.deleteMany();
+    
+    console.log('🗑️  Suppression des régions...');
+    await prisma.tblReg.deleteMany();
+    
+    console.log('🗑️  Suppression des districts...');
+    await prisma.tblDst.deleteMany();
+    
+    console.log('✅ Base de données réinitialisée avec succès!');
+    
+    // Afficher le nombre d'utilisateurs préservés
+    const userCount = await prisma.user.count();
+    const roleCount = await prisma.role.count();
+    console.log(`👥 ${userCount} utilisateurs préservés`);
+    console.log(`🔑 ${roleCount} rôles préservés`);
+    
+  } catch (error) {
+    console.error('❌ Erreur lors de la réinitialisation:', error);
+    throw error;
+  }
+}
+
+// Interfaces pour les données
 interface DistrictData {
   COD_DST: string;
   LIB_DST: string;
@@ -229,48 +312,6 @@ async function importCommunes() {
   console.log(`✅ ${data.length} communes importées`);
 }
 
-async function importCels() {
-  console.log('🗳️ Import des cellules électorales...');
-  const content = fs.readFileSync(path.join(process.cwd(), 'carto/6-tbl_cel.csv'), 'utf-8');
-  const data = parseCSV(content) as CelData[];
-  
-  // Récupérer les utilisateurs existants
-  const existingUsers = await prisma.user.findMany({
-    select: { id: true }
-  });
-  const userIds = existingUsers.map(u => u.id);
-  
-  for (const cel of data) {
-    // Vérifier si l'utilisateur existe, sinon mettre null
-    const numeroUtilisateur = cel.NUM_UTIL && userIds.includes(cel.NUM_UTIL) 
-      ? cel.NUM_UTIL 
-      : null;
-    
-    await prisma.tblCel.upsert({
-      where: { codeCellule: cel.COD_CEL },
-      update: {
-        typeCellule: cel.TYP_CEL?.replace(/"/g, '').trim() || null,
-        ligneDebutCellule: cel.LIGNE_DEB_CEL ? parseFloat(cel.LIGNE_DEB_CEL) : null,
-        etatResultatCellule: cel.ETA_RESULTAT_CEL || null,
-        nombreBureauxVote: cel.NBR_BV_CEL ? parseInt(cel.NBR_BV_CEL) : null,
-        libelleCellule: cel.LIB_CEL,
-        numeroUtilisateur: numeroUtilisateur,
-      },
-      create: {
-        codeCellule: cel.COD_CEL,
-        typeCellule: cel.TYP_CEL?.replace(/"/g, '').trim() || null,
-        ligneDebutCellule: cel.LIGNE_DEB_CEL ? parseFloat(cel.LIGNE_DEB_CEL) : null,
-        etatResultatCellule: cel.ETA_RESULTAT_CEL || null,
-        nombreBureauxVote: cel.NBR_BV_CEL ? parseInt(cel.NBR_BV_CEL) : null,
-        libelleCellule: cel.LIB_CEL,
-        numeroUtilisateur: numeroUtilisateur,
-      },
-    });
-  }
-  
-  console.log(`✅ ${data.length} cellules électorales importées`);
-}
-
 async function importLieuxVote() {
   console.log('🏛️ Import des lieux de vote...');
   const content = fs.readFileSync(path.join(process.cwd(), 'carto/7-tbl_lv.csv'), 'utf-8');
@@ -357,10 +398,63 @@ async function importBureauxVote() {
   console.log(`✅ ${data.length} bureaux de vote importés`);
 }
 
+async function importCels() {
+  console.log('🗳️ Import des cellules électorales...');
+  const content = fs.readFileSync(path.join(process.cwd(), 'carto/6-tbl_cel.csv'), 'utf-8');
+  const data = parseCSV(content) as CelData[];
+  
+  // Récupérer les utilisateurs existants
+  const existingUsers = await prisma.user.findMany({
+    select: { id: true }
+  });
+  const userIds = existingUsers.map(u => u.id);
+  
+  for (const cel of data) {
+    // Vérifier si l'utilisateur existe, sinon mettre null
+    const numeroUtilisateur = cel.NUM_UTIL && userIds.includes(cel.NUM_UTIL) 
+      ? cel.NUM_UTIL 
+      : null;
+    
+    await prisma.tblCel.upsert({
+      where: { codeCellule: cel.COD_CEL },
+      update: {
+        typeCellule: cel.TYP_CEL?.replace(/"/g, '').trim() || null,
+        ligneDebutCellule: cel.LIGNE_DEB_CEL ? parseFloat(cel.LIGNE_DEB_CEL) : null,
+        etatResultatCellule: cel.ETA_RESULTAT_CEL || null,
+        nombreBureauxVote: cel.NBR_BV_CEL ? parseInt(cel.NBR_BV_CEL) : null,
+        libelleCellule: cel.LIB_CEL,
+        numeroUtilisateur: numeroUtilisateur,
+      },
+      create: {
+        codeCellule: cel.COD_CEL,
+        typeCellule: cel.TYP_CEL?.replace(/"/g, '').trim() || null,
+        ligneDebutCellule: cel.LIGNE_DEB_CEL ? parseFloat(cel.LIGNE_DEB_CEL) : null,
+        etatResultatCellule: cel.ETA_RESULTAT_CEL || null,
+        nombreBureauxVote: cel.NBR_BV_CEL ? parseInt(cel.NBR_BV_CEL) : null,
+        libelleCellule: cel.LIB_CEL,
+        numeroUtilisateur: numeroUtilisateur,
+      },
+    });
+  }
+  
+  console.log(`✅ ${data.length} cellules électorales importées`);
+}
+
 async function main() {
   try {
-    console.log('🚀 Début de l\'import des données cartographiques...');
-    console.log('📁 Ordre d\'importation selon les fichiers carto/ :');
+    console.log('🚀 Début du processus complet : Réinitialisation + Import cartographique');
+    console.log('='.repeat(80));
+    
+    // Étape 1: Générer le client Prisma
+    await generatePrismaClient();
+    console.log('');
+    
+    // Étape 2: Réinitialiser la base de données
+    await resetDatabase();
+    console.log('');
+    
+    // Étape 3: Importer les données cartographiques
+    console.log('📁 Import des données cartographiques dans l\'ordre :');
     console.log('   1. Districts (1-tbl_dst.csv)');
     console.log('   2. Régions (2-tbl_reg.csv)');
     console.log('   3. Départements (3-tbl_dept.csv)');
@@ -380,15 +474,23 @@ async function main() {
     await importLieuxVote();
     await importBureauxVote();
     
-    console.log('✅ Import terminé avec succès!');
-    console.log('📊 Données cartographiques complètes importées');
+    console.log('');
+    console.log('='.repeat(80));
+    console.log('✅ Processus terminé avec succès!');
+    console.log('📊 Base de données réinitialisée et données cartographiques importées');
+    console.log('🔐 Comptes utilisateurs et rôles préservés');
     
   } catch (error) {
-    console.error('❌ Erreur lors de l\'import:', error);
+    console.error('❌ Erreur lors du processus:', error);
     process.exit(1);
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main();
+// Exécuter seulement si ce script est appelé directement
+if (require.main === module) {
+  main();
+}
+
+export { main as resetAndImportCarto };

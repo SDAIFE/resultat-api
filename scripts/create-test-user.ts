@@ -36,7 +36,7 @@ async function createTestUser(): Promise<void> {
         data: {
           code: 'USER',
           name: 'Utilisateur',
-          description: 'Utilisateur standard'
+          description: 'Utilisateur Informaticien'
         }
       });
       console.log('✅ Rôle USER créé');

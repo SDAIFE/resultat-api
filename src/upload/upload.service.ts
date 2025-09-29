@@ -78,11 +78,27 @@ export class UploadService {
         mapping = this.excelAnalyzer.mapCompilCecColumnsToDbFields(analysis.headers);
       }
       
-      // Valider les données
+      // Valider les données avec contrôles stricts
       const validation = await this.validateExcelData(analysis.dataRows, mapping);
       
       if (!validation.isValid) {
-        throw new Error(`Validation échouée: ${validation.errors.join('; ')}`);
+        // Construire un message d'erreur détaillé
+        let errorMessage = 'Validation échouée - Erreurs détectées :\n';
+        
+        if (validation.colonnesManquantes.length > 0) {
+          errorMessage += `\n• Colonnes manquantes : ${validation.colonnesManquantes.join(', ')}`;
+        }
+        
+        if (validation.lignesEnErreur.length > 0) {
+          errorMessage += '\n• Erreurs de saisie détectées :';
+          validation.lignesEnErreur.forEach(ligne => {
+            errorMessage += `\n  - Ligne ${ligne.ligne} : ${ligne.erreurs.join('; ')}`;
+          });
+        }
+        
+        errorMessage += '\n\nVeuillez corriger ces erreurs avant de réessayer l\'import.';
+        
+        throw new BadRequestException(errorMessage);
       }
 
       // Insérer directement les données dans TblImportExcelCel
@@ -96,7 +112,7 @@ export class UploadService {
   }
 
   /**
-   * Valide les données Excel
+   * Valide les données Excel avec contrôles stricts
    */
   private async validateExcelData(
     dataRows: any[][],
@@ -108,31 +124,21 @@ export class UploadService {
     const colonnesInconnues: string[] = [];
     const lignesEnErreur: Array<{ ligne: number; erreurs: string[] }> = [];
 
-    // Vérifier les colonnes manquantes
-    const requiredFields = ['ordre', 'numeroBureauVote', 'populationTotale'];
-    const mappedFields = Object.values(mapping).map(m => m.field);
-    
-    requiredFields.forEach(field => {
-      if (!mappedFields.includes(field)) {
-        colonnesManquantes.push(field);
-      }
-    });
-
-    // Valider chaque ligne de données
+    // Valider chaque ligne de données avec contrôles stricts
     dataRows.forEach((row, rowIndex) => {
       const ligneErreurs: string[] = [];
-      const ligneNumero = rowIndex + 13; // Ligne 13+ dans Excel
+      const ligneNumero = rowIndex + 13; // Ligne 13+ dans Excel (données commencent à la ligne 13)
 
-      // Vérifier les champs obligatoires
+      // Validation stricte des champs numériques
       Object.entries(mapping).forEach(([colName, mappingInfo]) => {
         const value = row[mappingInfo.index];
         
-        if (mappingInfo.field === 'ordre' && (!value || value === '')) {
-          ligneErreurs.push(`Ordre manquant`);
-        }
-        
-        if (mappingInfo.field === 'numeroBureauVote' && (!value || value === '')) {
-          ligneErreurs.push(`Numéro de bureau de vote manquant`);
+        // Validation stricte des champs numériques
+        if (value && value !== '') {
+          const validationError = this.validateNumericField(value, mappingInfo.field, colName);
+          if (validationError) {
+            ligneErreurs.push(validationError);
+          }
         }
       });
 
@@ -145,7 +151,7 @@ export class UploadService {
     });
 
     // Déterminer si la validation est réussie
-    const isValid = colonnesManquantes.length === 0 && lignesEnErreur.length === 0;
+    const isValid = lignesEnErreur.length === 0;
 
     return {
       isValid,
@@ -155,6 +161,191 @@ export class UploadService {
       colonnesInconnues,
       lignesEnErreur,
     };
+  }
+
+  /**
+   * Valide un champ numérique avec détection d'erreurs de saisie
+   */
+  private validateNumericField(value: any, fieldName: string, columnName: string): string | null {
+    const stringValue = String(value).trim();
+    
+    // Champs à exclure de la validation
+    const excludedFields = [
+      'ordre',
+      'referenceLieuVote', 
+      'libelleLieuVote',
+      'numeroBureauVote',
+      'cellulesVides',
+      'statut',
+      'inscritsLed',
+      'void'
+    ];
+    
+    // Si le champ est dans la liste d'exclusion, ne pas valider
+    if (excludedFields.includes(fieldName)) {
+      return null;
+    }
+    
+    // Définir les champs numériques et leurs règles de validation
+    const numericFields = {
+      'nombreScores': { type: 'integer', allowDecimal: false },
+      'populationTotale': { type: 'number', allowDecimal: true },
+      'populationHommes': { type: 'number', allowDecimal: true },
+      'populationFemmes': { type: 'number', allowDecimal: true },
+      'personnesAstreintes': { type: 'number', allowDecimal: true },
+      'votantsHommes': { type: 'number', allowDecimal: true },
+      'votantsFemmes': { type: 'number', allowDecimal: true },
+      'totalVotants': { type: 'number', allowDecimal: true },
+      'tauxParticipation': { type: 'percentage', allowDecimal: true },
+      'bulletinsNuls': { type: 'number', allowDecimal: true },
+      'bulletinsBlancs': { type: 'number', allowDecimal: true },
+      'suffrageExprime': { type: 'number', allowDecimal: true },
+      'score1': { type: 'number', allowDecimal: true },
+      'score2': { type: 'number', allowDecimal: true },
+      'score3': { type: 'number', allowDecimal: true },
+      'score4': { type: 'number', allowDecimal: true },
+      'score5': { type: 'number', allowDecimal: true }
+    };
+
+    const fieldConfig = numericFields[fieldName];
+    if (!fieldConfig) {
+      return null; // Pas un champ numérique
+    }
+
+    // Détecter les caractères invalides courants
+    const invalidChars = this.detectInvalidCharacters(stringValue, fieldConfig);
+    if (invalidChars.length > 0) {
+      const suggestions = this.generateCharacterSuggestions(invalidChars);
+      return `Colonne '${columnName}' : valeur '${stringValue}' contient des caractères invalides [${invalidChars.join(', ')}]. ${suggestions}`;
+    }
+
+    // Validation spécifique selon le type
+    if (fieldConfig.type === 'percentage') {
+      return this.validatePercentage(stringValue, columnName);
+    } else {
+      return this.validateNumber(stringValue, columnName, fieldConfig.allowDecimal);
+    }
+  }
+
+  /**
+   * Détecte les caractères invalides dans une valeur numérique
+   */
+  private detectInvalidCharacters(value: string, config: any): string[] {
+    const invalidChars: string[] = [];
+    
+    // Caractères autorisés selon le type
+    let allowedPattern: RegExp;
+    if (config.type === 'percentage') {
+      allowedPattern = /^[0-9.,\s%-]+$/;
+    } else if (config.allowDecimal) {
+      allowedPattern = /^[0-9.,\s-]+$/;
+    } else {
+      allowedPattern = /^[0-9\s-]+$/;
+    }
+
+    // Vérifier chaque caractère
+    for (let i = 0; i < value.length; i++) {
+      const char = value[i];
+      if (!allowedPattern.test(char)) {
+        invalidChars.push(`'${char}'`);
+      }
+    }
+
+    return invalidChars;
+  }
+
+  /**
+   * Génère des suggestions de correction pour les caractères invalides
+   */
+  private generateCharacterSuggestions(invalidChars: string[]): string {
+    const suggestions: string[] = [];
+    
+    invalidChars.forEach(char => {
+      const cleanChar = char.replace(/'/g, '');
+      switch (cleanChar.toLowerCase()) {
+        case 'o':
+          suggestions.push(`'${cleanChar}' → '0'`);
+          break;
+        case 'l':
+        case 'i':
+          suggestions.push(`'${cleanChar}' → '1'`);
+          break;
+        case 's':
+          suggestions.push(`'${cleanChar}' → '5'`);
+          break;
+        case 'g':
+          suggestions.push(`'${cleanChar}' → '6'`);
+          break;
+        case 'b':
+          suggestions.push(`'${cleanChar}' → '8'`);
+          break;
+        default:
+          suggestions.push(`'${cleanChar}' → caractère numérique`);
+      }
+    });
+
+    return suggestions.length > 0 ? `Corrections suggérées : ${suggestions.join(', ')}` : '';
+  }
+
+  /**
+   * Valide un pourcentage
+   */
+  private validatePercentage(value: string, columnName: string): string | null {
+    // Nettoyer la valeur (enlever les espaces)
+    const cleaned = value.replace(/\s/g, '');
+    
+    // Vérifier le format de pourcentage
+    if (!/^[0-9.,%-]+$/.test(cleaned)) {
+      return `Colonne '${columnName}' : format de pourcentage invalide '${value}'`;
+    }
+
+    // Extraire le nombre (enlever % et virgules)
+    const numberStr = cleaned.replace(/[%,]/g, '').replace(',', '.');
+    const numValue = parseFloat(numberStr);
+    
+    if (isNaN(numValue)) {
+      return `Colonne '${columnName}' : valeur '${value}' n'est pas un pourcentage valide`;
+    }
+
+    // Vérifier la plage (0-100% généralement)
+    if (numValue < 0 || numValue > 100) {
+      return `Colonne '${columnName}' : pourcentage '${value}' doit être entre 0 et 100`;
+    }
+
+    return null;
+  }
+
+  /**
+   * Valide un nombre
+   */
+  private validateNumber(value: string, columnName: string, allowDecimal: boolean): string | null {
+    // Nettoyer la valeur (enlever les espaces)
+    const cleaned = value.replace(/\s/g, '');
+    
+    // Vérifier le format numérique
+    if (!/^[0-9.,-]+$/.test(cleaned)) {
+      return `Colonne '${columnName}' : format numérique invalide '${value}'`;
+    }
+
+    // Remplacer les virgules par des points pour le parsing
+    const normalizedValue = cleaned.replace(',', '.');
+    const numValue = parseFloat(normalizedValue);
+    
+    if (isNaN(numValue)) {
+      return `Colonne '${columnName}' : valeur '${value}' n'est pas un nombre valide`;
+    }
+
+    // Vérifier si c'est un entier quand requis
+    if (!allowDecimal && !Number.isInteger(numValue)) {
+      return `Colonne '${columnName}' : valeur '${value}' doit être un nombre entier`;
+    }
+
+    // Vérifier que le nombre est positif (pour la plupart des champs)
+    if (numValue < 0) {
+      return `Colonne '${columnName}' : valeur '${value}' doit être positive`;
+    }
+
+    return null;
   }
 
   /**
@@ -241,6 +432,33 @@ export class UploadService {
         },
       });
       console.log(`✅ Statut de la CEL ${codeCellule} mis à jour: I (Importé)`);
+      
+      // Mettre à jour le statut des imports dans TblImportExcelCel
+      await this.prisma.tblImportExcelCel.updateMany({
+        where: {
+          codeCellule,
+          nomFichier,
+          numeroUtilisateur: userId,
+        },
+        data: {
+          statutImport: 'COMPLETED',
+        },
+      });
+      console.log(`✅ Statut des imports mis à jour: COMPLETED pour ${lignesReussies} lignes`);
+    } else if (lignesEchouees > 0) {
+      // Marquer les imports comme échoués si aucune ligne n'a réussi
+      await this.prisma.tblImportExcelCel.updateMany({
+        where: {
+          codeCellule,
+          nomFichier,
+          numeroUtilisateur: userId,
+        },
+        data: {
+          statutImport: 'ERROR',
+          messageErreur: `Échec de l'import: ${lignesEchouees} lignes ont échoué`,
+        },
+      });
+      console.log(`❌ Statut des imports mis à jour: ERROR pour ${lignesEchouees} lignes`);
     }
 
     return { lignesTraitees, lignesReussies, lignesEchouees, codeCellule, nomFichier };

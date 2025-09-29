@@ -35,7 +35,22 @@ export class UserDashboardStatsDto extends DashboardStatsDto {
 }
 
 export class AdminDashboardStatsDto extends DashboardStatsDto {
-  // Spécifique à l'admin
+  // Métriques communes ADMIN/SADMIN
+  totalRegions: number;
+  totalDepartements: number;
+  totalUtilisateurs: number;
+  utilisateursParRole: Array<{
+    role: string;
+    count: number;
+  }>;
+  importsParJour: Array<{
+    date: string;
+    nombreImports: number;
+    nombreReussis: number;
+    nombreEchoues: number;
+  }>;
+  
+  // Métriques spécifiques ADMIN (départements assignés)
   departementsAssignes: number;
   utilisateursActifs: number;
   celsParDepartement: Array<{
@@ -47,34 +62,5 @@ export class AdminDashboardStatsDto extends DashboardStatsDto {
   }>;
 }
 
-export class SadminDashboardStatsDto extends DashboardStatsDto {
-  // Spécifique au super admin
-  totalRegions: number;
-  totalDepartements: number;
-  totalUtilisateurs: number;
-  celsParRegion: Array<{
-    codeRegion: string;
-    libelleRegion: string;
-    totalCels: number;
-    celsAvecImport: number;
-    tauxProgression: number;
-  }>;
-  celsParDepartement: Array<{
-    codeDepartement: string;
-    libelleDepartement: string;
-    codeRegion: string;
-    totalCels: number;
-    celsAvecImport: number;
-    tauxProgression: number;
-  }>;
-  utilisateursParRole: Array<{
-    role: string;
-    count: number;
-  }>;
-  importsParJour: Array<{
-    date: string;
-    nombreImports: number;
-    nombreReussis: number;
-    nombreEchoues: number;
-  }>;
-}
+// Alias pour maintenir la compatibilité
+export class SadminDashboardStatsDto extends AdminDashboardStatsDto {}

@@ -7,6 +7,7 @@ import {
   SadminDashboardStatsDto 
 } from './dto/dashboard-stats.dto';
 import { DashboardCelDto, DashboardCelListResponseDto, DashboardCelFilterDto } from './dto/dashboard-cel.dto';
+import { RealtimeMetricsDto } from './dto/realtime-metrics.dto';
 
 @Injectable()
 export class DashboardService {
@@ -14,40 +15,47 @@ export class DashboardService {
 
   /**
    * Récupère les statistiques du dashboard pour un utilisateur USER
+   * Optimisé pour éviter la limite de 2100 paramètres SQL Server
    */
   async getUserDashboardStats(userId: string): Promise<UserDashboardStatsDto> {
-    // Récupérer les CELs assignées à l'utilisateur
-    const celsAssignees = await this.prisma.tblCel.findMany({
-      where: { numeroUtilisateur: userId },
-      include: {
-        lieuxVote: {
-          include: {
-            departement: {
-              include: { region: true },
-            },
-            bureauxVote: true,
-          },
+    // Utiliser des requêtes optimisées pour éviter la limite de paramètres
+    const [totalCels, celsAvecImport, celsParStatut] = await Promise.all([
+      this.prisma.tblCel.count({
+        where: { numeroUtilisateur: userId },
+      }),
+      this.prisma.tblCel.count({
+        where: { 
+          numeroUtilisateur: userId,
+          etatResultatCellule: 'I',
         },
-      },
-    });
+      }),
+      this.prisma.tblCel.groupBy({
+        by: ['etatResultatCellule'],
+        _count: { etatResultatCellule: true },
+        where: { numeroUtilisateur: userId },
+      })
+    ]);
 
-    const totalCels = celsAssignees.length;
-    const celsAvecImport = celsAssignees.filter(cel => cel.etatResultatCellule === 'IMPORTED').length;
     const celsSansImport = totalCels - celsAvecImport;
     const tauxProgressionPersonnel = totalCels > 0 ? (celsAvecImport / totalCels) * 100 : 0;
 
-    // Statistiques par statut
-    const celsParStatut = {
-      pending: celsAssignees.filter(cel => !cel.etatResultatCellule || cel.etatResultatCellule === 'PENDING').length,
-      imported: celsAvecImport,
-      error: celsAssignees.filter(cel => cel.etatResultatCellule === 'ERROR').length,
-      processing: celsAssignees.filter(cel => cel.etatResultatCellule === 'PROCESSING').length,
+    // Reconstituer les statistiques par statut
+    const statutMap = celsParStatut.reduce((acc, item) => {
+      acc[item.etatResultatCellule || 'N'] = item._count.etatResultatCellule;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const celsParStatutFormatted = {
+      pending: statutMap['N'] || 0,        // Non importé
+      imported: statutMap['I'] || 0,       // Importé
+      error: statutMap['E'] || 0,          // Erreur (si existe)
+      processing: statutMap['P'] || 0,     // En cours de traitement
     };
 
-    // Dernier import
+    // Dernier import (requête optimisée)
     const dernierImport = await this.prisma.tblImportExcelCel.findFirst({
       where: { 
-        codeCellule: { in: celsAssignees.map(cel => cel.codeCellule) },
+        numeroUtilisateur: userId,
         statutImport: 'COMPLETED',
       },
       orderBy: { dateImport: 'desc' },
@@ -58,13 +66,13 @@ export class DashboardService {
       celsAvecImport,
       celsSansImport,
       tauxProgression: tauxProgressionPersonnel,
-      celsParStatut,
+      celsParStatut: celsParStatutFormatted,
       dernierImport: dernierImport?.dateImport,
-      nombreErreurs: celsParStatut.error,
+      nombreErreurs: celsParStatutFormatted.error,
       alertes: {
         celsSansImport,
-        celsEnErreur: celsParStatut.error,
-        celsEnAttente: celsParStatut.pending,
+        celsEnErreur: celsParStatutFormatted.error,
+        celsEnAttente: celsParStatutFormatted.pending,
       },
       celsAssignees: totalCels,
       celsAvecImportAssignees: celsAvecImport,
@@ -75,163 +83,49 @@ export class DashboardService {
 
   /**
    * Récupère les statistiques du dashboard pour un utilisateur ADMIN
+   * Optimisé pour éviter la limite de 2100 paramètres SQL Server
    */
   async getAdminDashboardStats(userId: string): Promise<AdminDashboardStatsDto> {
-    // Récupérer les départements assignés à l'utilisateur
-    const departementsAssignes = await this.prisma.tblDept.findMany({
-      where: { numeroUtilisateur: userId },
-      include: { region: true },
-    });
-
-    const codesDepartements = departementsAssignes.map(d => d.codeDepartement);
-
-    // Récupérer toutes les CELs des départements assignés
-    const cels = await this.prisma.tblCel.findMany({
-      where: {
-        lieuxVote: {
-          some: {
-            codeDepartement: { in: codesDepartements },
-          },
-        },
-      },
-      include: {
-        lieuxVote: {
-          include: {
-            departement: {
-              include: { region: true },
-            },
-            bureauxVote: true,
-          },
-        },
-      },
-    });
-
-    const totalCels = cels.length;
-    const celsAvecImport = cels.filter(cel => cel.etatResultatCellule === 'IMPORTED').length;
-    const celsSansImport = totalCels - celsAvecImport;
-    const tauxProgression = totalCels > 0 ? (celsAvecImport / totalCels) * 100 : 0;
-
-    // Statistiques par statut
-    const celsParStatut = {
-      pending: cels.filter(cel => !cel.etatResultatCellule || cel.etatResultatCellule === 'PENDING').length,
-      imported: celsAvecImport,
-      error: cels.filter(cel => cel.etatResultatCellule === 'ERROR').length,
-      processing: cels.filter(cel => cel.etatResultatCellule === 'PROCESSING').length,
-    };
-
-    // Statistiques par département
-    const celsParDepartement = departementsAssignes.map(dept => {
-      const celsDept = cels.filter(cel => 
-        cel.lieuxVote.some(lv => lv.departement.codeDepartement === dept.codeDepartement)
-      );
-      const celsAvecImportDept = celsDept.filter(cel => cel.etatResultatCellule === 'IMPORTED').length;
-      
-      return {
-        codeDepartement: dept.codeDepartement,
-        libelleDepartement: dept.libelleDepartement,
-        totalCels: celsDept.length,
-        celsAvecImport: celsAvecImportDept,
-        tauxProgression: celsDept.length > 0 ? (celsAvecImportDept / celsDept.length) * 100 : 0,
-      };
-    });
-
-    // Utilisateurs actifs dans les départements
-    const utilisateursActifs = await this.prisma.user.count({
-      where: {
-        departements: {
-          some: {
-            codeDepartement: { in: codesDepartements },
-          },
-        },
-        isActive: true,
-      },
-    });
-
-    return {
-      totalCels,
-      celsAvecImport,
-      celsSansImport,
-      tauxProgression,
-      celsParStatut,
-      nombreErreurs: celsParStatut.error,
-      alertes: {
-        celsSansImport,
-        celsEnErreur: celsParStatut.error,
-        celsEnAttente: celsParStatut.pending,
-      },
-      departementsAssignes: departementsAssignes.length,
-      utilisateursActifs,
-      celsParDepartement,
-    };
+    // ADMIN a exactement les mêmes données que SADMIN - pas de filtres de périmètre
+    // Utiliser la même logique que getSadminDashboardStats
+    return this.getSadminDashboardStats();
   }
 
   /**
    * Récupère les statistiques du dashboard pour un utilisateur SADMIN
+   * ADMIN et SADMIN ont exactement les mêmes données (pas de filtres de périmètre)
    */
   async getSadminDashboardStats(): Promise<SadminDashboardStatsDto> {
-    // Récupérer toutes les CELs
-    const cels = await this.prisma.tblCel.findMany({
-      include: {
-        lieuxVote: {
-          include: {
-            departement: {
-              include: { region: true },
-            },
-            bureauxVote: true,
-          },
-        },
-      },
-    });
+    // 1. Statistiques générales des CELs (toutes les CELs)
+    const [totalCels, celsAvecImport, celsParStatut] = await Promise.all([
+      this.prisma.tblCel.count(),
+      this.prisma.tblCel.count({ where: { etatResultatCellule: 'I' } }),
+      this.prisma.tblCel.groupBy({
+        by: ['etatResultatCellule'],
+        _count: { etatResultatCellule: true },
+      })
+    ]);
 
-    const totalCels = cels.length;
-    const celsAvecImport = cels.filter(cel => cel.etatResultatCellule === 'IMPORTED').length;
     const celsSansImport = totalCels - celsAvecImport;
     const tauxProgression = totalCels > 0 ? (celsAvecImport / totalCels) * 100 : 0;
 
-    // Statistiques par statut
-    const celsParStatut = {
-      pending: cels.filter(cel => !cel.etatResultatCellule || cel.etatResultatCellule === 'PENDING').length,
-      imported: celsAvecImport,
-      error: cels.filter(cel => cel.etatResultatCellule === 'ERROR').length,
-      processing: cels.filter(cel => cel.etatResultatCellule === 'PROCESSING').length,
+    // Reconstituer les statistiques par statut
+    const statutMap = celsParStatut.reduce((acc, item) => {
+      acc[item.etatResultatCellule || 'N'] = item._count.etatResultatCellule;
+      return acc;
+    }, {} as Record<string, number>);
+
+    const celsParStatutFormatted = {
+      pending: statutMap['N'] || 0,        // Non importé
+      imported: statutMap['I'] || 0,       // Importé
+      error: statutMap['E'] || 0,          // Erreur (si existe)
+      processing: statutMap['P'] || 0,     // En cours de traitement
     };
 
-    // Statistiques par région
+    // 2. Métriques communes ADMIN/SADMIN
     const regions = await this.prisma.tblReg.findMany();
-    const celsParRegion = regions.map(region => {
-      const celsRegion = cels.filter(cel => 
-        cel.lieuxVote.some(lv => lv.departement.codeRegion === region.codeRegion)
-      );
-      const celsAvecImportRegion = celsRegion.filter(cel => cel.etatResultatCellule === 'IMPORTED').length;
-      
-      return {
-        codeRegion: region.codeRegion,
-        libelleRegion: region.libelleRegion,
-        totalCels: celsRegion.length,
-        celsAvecImport: celsAvecImportRegion,
-        tauxProgression: celsRegion.length > 0 ? (celsAvecImportRegion / celsRegion.length) * 100 : 0,
-      };
-    });
-
-    // Statistiques par département
-    const departements = await this.prisma.tblDept.findMany({
-      include: { region: true },
-    });
-    const celsParDepartement = departements.map(dept => {
-      const celsDept = cels.filter(cel => 
-        cel.lieuxVote.some(lv => lv.departement.codeDepartement === dept.codeDepartement)
-      );
-      const celsAvecImportDept = celsDept.filter(cel => cel.etatResultatCellule === 'IMPORTED').length;
-      
-      return {
-        codeDepartement: dept.codeDepartement,
-        libelleDepartement: dept.libelleDepartement,
-        codeRegion: dept.codeRegion,
-        totalCels: celsDept.length,
-        celsAvecImport: celsAvecImportDept,
-        tauxProgression: celsDept.length > 0 ? (celsAvecImportDept / celsDept.length) * 100 : 0,
-      };
-    });
+    const departements = await this.prisma.tblDept.findMany();
+    const totalUtilisateurs = await this.prisma.user.count();
 
     // Utilisateurs par rôle
     const utilisateursParRole = await this.prisma.user.groupBy({
@@ -239,36 +133,96 @@ export class DashboardService {
       _count: { roleId: true },
     });
 
-    // Imports par jour (derniers 30 jours)
+    // Imports par jour (derniers 7 jours seulement)
     const dateDebut = new Date();
-    dateDebut.setDate(dateDebut.getDate() - 30);
+    dateDebut.setDate(dateDebut.getDate() - 7);
     
-    const importsParJour = await this.prisma.tblImportExcelCel.groupBy({
-      by: ['dateImport'],
-      _count: { dateImport: true },
+    // Récupérer les fichiers CEL importés par jour (pas les lignes)
+    const importsRecents = await this.prisma.tblImportExcelCel.findMany({
       where: {
         dateImport: { gte: dateDebut },
         statutImport: 'COMPLETED',
       },
+      select: {
+        dateImport: true,
+        codeCellule: true,
+        nomFichier: true,
+      },
     });
+
+    // Grouper par date et compter les fichiers uniques (codeCellule + nomFichier)
+    const importsParJourMap = new Map<string, Set<string>>();
+    importsRecents.forEach(import_ => {
+      const dateStr = import_.dateImport.toISOString().split('T')[0];
+      const fileKey = `${import_.codeCellule}-${import_.nomFichier}`;
+      
+      if (!importsParJourMap.has(dateStr)) {
+        importsParJourMap.set(dateStr, new Set());
+      }
+      importsParJourMap.get(dateStr)!.add(fileKey);
+    });
+
+    const importsParJour = Array.from(importsParJourMap.entries()).map(([date, fileSet]) => ({
+      dateImport: new Date(date),
+      _count: { dateImport: fileSet.size }, // Nombre de fichiers uniques
+    }));
+
+    // 3. Pour SADMIN, pas de départements assignés spécifiques
+    const departementsAssignes = await this.prisma.tblDept.findMany();
+    const utilisateursActifs = await this.prisma.user.count({
+      where: { isActive: true },
+    });
+
+    // 4. Statistiques par département (tous les départements pour SADMIN)
+    const celsParDepartement = await Promise.all(
+      departements.map(async (dept) => {
+        const totalCelsDept = await this.prisma.tblCel.count({
+          where: {
+            lieuxVote: {
+              some: {
+                codeDepartement: dept.codeDepartement,
+              },
+            },
+          },
+        });
+
+        const celsAvecImportDept = await this.prisma.tblCel.count({
+          where: {
+            etatResultatCellule: 'I',
+            lieuxVote: {
+              some: {
+                codeDepartement: dept.codeDepartement,
+              },
+            },
+          },
+        });
+
+        return {
+          codeDepartement: dept.codeDepartement,
+          libelleDepartement: dept.libelleDepartement,
+          totalCels: totalCelsDept,
+          celsAvecImport: celsAvecImportDept,
+          tauxProgression: totalCelsDept > 0 ? (celsAvecImportDept / totalCelsDept) * 100 : 0,
+        };
+      })
+    );
 
     return {
       totalCels,
       celsAvecImport,
       celsSansImport,
       tauxProgression,
-      celsParStatut,
-      nombreErreurs: celsParStatut.error,
+      celsParStatut: celsParStatutFormatted,
+      nombreErreurs: celsParStatutFormatted.error,
       alertes: {
         celsSansImport,
-        celsEnErreur: celsParStatut.error,
-        celsEnAttente: celsParStatut.pending,
+        celsEnErreur: celsParStatutFormatted.error,
+        celsEnAttente: celsParStatutFormatted.pending,
       },
+      // Métriques communes ADMIN/SADMIN
       totalRegions: regions.length,
       totalDepartements: departements.length,
-      totalUtilisateurs: await this.prisma.user.count(),
-      celsParRegion,
-      celsParDepartement,
+      totalUtilisateurs,
       utilisateursParRole: utilisateursParRole.map(item => ({
         role: item.roleId || 'Unknown',
         count: item._count.roleId,
@@ -276,9 +230,13 @@ export class DashboardService {
       importsParJour: importsParJour.map(item => ({
         date: item.dateImport.toISOString().split('T')[0],
         nombreImports: item._count.dateImport,
-        nombreReussis: item._count.dateImport, // Simplifié
-        nombreEchoues: 0, // À calculer si nécessaire
+        nombreReussis: item._count.dateImport,
+        nombreEchoues: 0,
       })),
+      // Métriques spécifiques ADMIN (tous les départements pour SADMIN)
+      departementsAssignes: departementsAssignes.length,
+      utilisateursActifs,
+      celsParDepartement,
     };
   }
 
@@ -395,8 +353,8 @@ export class DashboardService {
         libelleRegion: cel.lieuxVote[0]?.departement.region.libelleRegion || '',
       },
       import: {
-        aImporte: cel.etatResultatCellule === 'IMPORTED',
-        dateDernierImport: cel.etatResultatCellule === 'IMPORTED' ? new Date() : undefined, // À récupérer de la table d'import
+        aImporte: cel.etatResultatCellule === 'I',
+        dateDernierImport: cel.etatResultatCellule === 'I' ? new Date() : undefined, // À récupérer de la table d'import
         nomFichier: undefined, // À récupérer de la table d'import
         statutImport: cel.etatResultatCellule,
         messageErreur: undefined, // À récupérer de la table d'import
@@ -415,5 +373,220 @@ export class DashboardService {
         lastName: cel.utilisateur.lastName,
       } : undefined,
     };
+  }
+
+  // ===========================================
+  // MÉTHODES SELON LES DIRECTIVES
+  // ===========================================
+
+  /**
+   * Récupère les métriques en temps réel
+   * Optimisé pour des mises à jour fréquentes
+   */
+  async getRealtimeMetrics(userId: string, userRole: string): Promise<RealtimeMetricsDto> {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    // Métriques de base selon le rôle
+    let baseMetrics: any;
+    
+    if (userRole === 'USER') {
+      baseMetrics = await this.getUserDashboardStats(userId);
+    } else if (userRole === 'ADMIN') {
+      baseMetrics = await this.getAdminDashboardStats(userId);
+    } else {
+      baseMetrics = await this.getSadminDashboardStats();
+    }
+
+    // Ajouter des métriques temps réel
+    const realtimeData = {
+      ...baseMetrics,
+      timestamp: now,
+      // Activité récente (dernières 24h)
+      activiteRecente: await this.getActiviteRecente(userId, userRole, today),
+      // Imports en cours
+      importsEnCours: await this.getImportsEnCours(userId, userRole),
+      // Alertes critiques
+      alertesCritiques: await this.getAlertesCritiques(userId, userRole),
+    };
+
+    return realtimeData;
+  }
+
+  /**
+   * Rafraîchit les métriques (invalidation du cache)
+   */
+  async refreshMetrics(userId: string, userRole: string): Promise<void> {
+    // Ici on pourrait implémenter l'invalidation du cache Redis
+    // Pour l'instant, on force le recalcul des métriques
+    
+    // Log de l'action de rafraîchissement
+    console.log(`Métriques rafraîchies pour l'utilisateur ${userId} avec le rôle ${userRole} à ${new Date().toISOString()}`);
+    
+    // Si vous utilisez Redis, vous pourriez faire :
+    // await this.redisService.del(`dashboard:${userRole}:${userId}`);
+    // await this.redisService.del(`dashboard:realtime:${userRole}:${userId}`);
+  }
+
+  /**
+   * Récupère l'activité récente (dernières 24h)
+   */
+  private async getActiviteRecente(userId: string, userRole: string, depuis: Date): Promise<any> {
+    const activite = {
+      importsAujourdhui: 0,
+      publicationsAujourdhui: 0,
+      connexionsAujourdhui: 0,
+    };
+
+    // Imports aujourd'hui selon le rôle (compter les fichiers CEL, pas les lignes)
+    if (userRole === 'USER') {
+      const importsUser = await this.prisma.tblImportExcelCel.findMany({
+        where: {
+          numeroUtilisateur: userId,
+          dateImport: { gte: depuis },
+          statutImport: 'COMPLETED',
+        },
+        select: {
+          codeCellule: true,
+          nomFichier: true,
+        },
+      });
+      
+      // Compter les fichiers uniques
+      const fichiersUniques = new Set(importsUser.map(imp => `${imp.codeCellule}-${imp.nomFichier}`));
+      activite.importsAujourdhui = fichiersUniques.size;
+      
+    } else {
+      // ADMIN et SADMIN - tous les imports (mêmes données)
+      const importsAdminSadmin = await this.prisma.tblImportExcelCel.findMany({
+        where: {
+          dateImport: { gte: depuis },
+          statutImport: 'COMPLETED',
+        },
+        select: {
+          codeCellule: true,
+          nomFichier: true,
+        },
+      });
+      
+      // Compter les fichiers uniques
+      const fichiersUniques = new Set(importsAdminSadmin.map(imp => `${imp.codeCellule}-${imp.nomFichier}`));
+      activite.importsAujourdhui = fichiersUniques.size;
+    }
+
+    // Publications aujourd'hui
+    activite.publicationsAujourdhui = await this.prisma.departmentPublicationHistory.count({
+      where: {
+        userId: userRole === 'USER' ? userId : undefined,
+        action: 'PUBLISH',
+        timestamp: { gte: depuis },
+      },
+    });
+
+    return activite;
+  }
+
+  /**
+   * Récupère les imports en cours
+   */
+  private async getImportsEnCours(userId: string, userRole: string): Promise<any> {
+    let whereClause: any = {
+      statutImport: 'PROCESSING',
+    };
+
+    if (userRole === 'USER') {
+      whereClause.numeroUtilisateur = userId;
+    } else {
+      // ADMIN et SADMIN - tous les imports en cours (mêmes données)
+      // Pas de filtre supplémentaire
+    }
+
+    const importsEnCours = await this.prisma.tblImportExcelCel.findMany({
+      where: whereClause,
+      include: {
+        utilisateur: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+      orderBy: { dateImport: 'desc' },
+      take: 10,
+    });
+
+    return {
+      nombre: importsEnCours.length,
+      liste: importsEnCours.map(importItem => ({
+        codeCellule: importItem.codeCellule,
+        nomFichier: importItem.nomFichier,
+        dateImport: importItem.dateImport,
+        utilisateur: importItem.utilisateur,
+        messageErreur: importItem.messageErreur,
+      })),
+    };
+  }
+
+  /**
+   * Récupère les alertes critiques
+   */
+  private async getAlertesCritiques(userId: string, userRole: string): Promise<any> {
+    const alertes = {
+      celsEnErreurCritique: 0,
+      importsBloques: 0,
+      utilisateursInactifs: 0,
+      departementsNonPublies: 0,
+    };
+
+    // CELs en erreur critique (plus de 3 tentatives)
+    if (userRole === 'USER') {
+      alertes.celsEnErreurCritique = await this.prisma.tblCel.count({
+        where: {
+          numeroUtilisateur: userId,
+          etatResultatCellule: 'E',
+        },
+      });
+    } else {
+      // ADMIN et SADMIN - toutes les CELs en erreur (mêmes données)
+      alertes.celsEnErreurCritique = await this.prisma.tblCel.count({
+        where: { etatResultatCellule: 'E' },
+      });
+    }
+
+    // Imports bloqués (en processing depuis plus de 1 heure)
+    const uneHeureAgo = new Date(Date.now() - 60 * 60 * 1000);
+    alertes.importsBloques = await this.prisma.tblImportExcelCel.count({
+      where: {
+        statutImport: 'PROCESSING',
+        dateImport: { lt: uneHeureAgo },
+      },
+    });
+
+    // Utilisateurs inactifs (SADMIN seulement)
+    if (userRole === 'SADMIN') {
+      alertes.utilisateursInactifs = await this.prisma.user.count({
+        where: { isActive: false },
+      });
+    }
+
+    // Départements non publiés (ADMIN et SADMIN)
+    if (userRole === 'ADMIN') {
+      alertes.departementsNonPublies = await this.prisma.tblDept.count({
+        where: {
+          numeroUtilisateur: userId,
+          statutPublication: { not: 'PUBLISHED' },
+        },
+      });
+    } else if (userRole === 'SADMIN') {
+      alertes.departementsNonPublies = await this.prisma.tblDept.count({
+        where: {
+          statutPublication: { not: 'PUBLISHED' },
+        },
+      });
+    }
+
+    return alertes;
   }
 }

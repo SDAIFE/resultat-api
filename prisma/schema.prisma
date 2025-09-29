@@ -67,13 +67,28 @@ model Role {
 // MODÈLES GÉOGRAPHIQUES ET ADMINISTRATIFS
 // ===========================================
 
+// TBL_DST - Districts
+model TblDst {
+  id String @id @default(cuid())
+  codeDistrict String @unique @map("COD_DST")
+  libelleDistrict String @map("LIB_DST")
+  chefLieu String? @map("CHEF_LIEU")
+  
+  // Relations
+  regions TblReg[]
+  
+  @@map("TBL_DST")
+}
+
 // TBL_REG - Régions
 model TblReg {
   id String @id @default(cuid())
   codeRegion String @unique @map("COD_REG")
   libelleRegion String @map("LIB_REG")
+  codeDistrict String? @map("COD_DST")
   
   // Relations
+  district TblDst? @relation(fields: [codeDistrict], references: [codeDistrict])
   departements TblDept[]
   
   @@map("TBL_REG")

@@ -9,6 +9,8 @@ export class UserResponseDto {
     name: string;
   };
   isActive: boolean;
+  isConnected: boolean;
+  lastConnectionAt?: Date;
   departements: {
     id: string;
     codeDepartement: string;

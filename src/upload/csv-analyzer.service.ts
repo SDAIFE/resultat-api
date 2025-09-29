@@ -34,8 +34,8 @@ export class CsvAnalyzerService {
       // Nettoyer les headers et créer des noms de colonnes plus clairs
       const cleanedHeaders = this.cleanHeaders(combinedHeaders);
       
-      // Les données commencent à partir de la ligne 14 (index 13)
-      const dataLines = lines.slice(13);
+      // Les données commencent à partir de la ligne 15 (index 14)
+      const dataLines = lines.slice(14);
       const dataRows = dataLines
         .filter(line => line.trim() && !line.startsWith(';')) // Ignorer les lignes vides et les lignes de séparateurs
         .map(line => this.parseCsvLine(line));
@@ -180,16 +180,17 @@ export class CsvAnalyzerService {
       } else if (colUpper === 'BULLETINS_BLANCS') {
         mapping[col] = { field: 'bulletinsBlancs', index, type: 'direct' };
       }
-      // Mapping pour les scores des candidats (noms complets)
-      else if (colUpper.includes('LAGOU ADJOUA HENRIETTE')) {
+      // Mapping pour les scores des candidats par position fixe
+      // Les scores des candidats sont toujours aux colonnes 27-31 (index 26-30)
+      else if (index === 26) {
         mapping[col] = { field: 'score1', index, type: 'direct' };
-      } else if (colUpper.includes('BILLON JEAN-LOUIS EUGENE')) {
+      } else if (index === 27) {
         mapping[col] = { field: 'score2', index, type: 'direct' };
-      } else if (colUpper.includes('EHIVET SIMONE') && colUpper.includes('GBAGBO')) {
+      } else if (index === 28) {
         mapping[col] = { field: 'score3', index, type: 'direct' };
-      } else if (colUpper.includes('DON-MELLO SENIN AHOUA JACOB')) {
+      } else if (index === 29) {
         mapping[col] = { field: 'score4', index, type: 'direct' };
-      } else if (colUpper.includes('ALASSANE OUATTARA')) {
+      } else if (index === 30) {
         mapping[col] = { field: 'score5', index, type: 'direct' };
       }
     });
@@ -241,6 +242,22 @@ export class CsvAnalyzerService {
       }
     }
     
+    // Correction spéciale pour les noms de candidats coupés
+    // "BILLON" de la ligne 1 + "JEAN-LOUIS EUGENE" de la ligne 2
+    for (let i = 0; i < combined.length; i++) {
+      if (combined[i] === 'BILLON' && i + 1 < combined.length && combined[i + 1] === 'JEAN-LOUIS EUGENE') {
+        combined[i] = 'BILLON JEAN-LOUIS EUGENE';
+        combined[i + 1] = ''; // Vider la cellule suivante
+      }
+    }
+    
+    // Correction pour "DON-MELLO SENIN AHOUA JACOB" qui pourrait être coupé
+    for (let i = 0; i < combined.length; i++) {
+      if (combined[i].includes('DON-MELLO') && combined[i].includes('SENIN') && combined[i].includes('AHOUA') && combined[i].includes('JACOB')) {
+        combined[i] = 'DON-MELLO SENIN AHOUA JACOB';
+      }
+    }
+    
     return combined;
   }
 
@@ -279,15 +296,16 @@ export class CsvAnalyzerService {
       'SUFFR_EXPRIMES',       // 23: Suffrages exprimés
       'CONTRLE SUFFAGES ET SCORES', // 24: Contrôle suffrages et scores
       'BULLETINS_BLANCS',     // 25: Bulletins blancs
-      'LAGOU ADJOUA HENRIETTE', // 26: Score candidat 1 (GP-PAIX)
-      'BILLON JEAN-LOUIS EUGENE', // 27: Score candidat 2 (CODE)
-      'EHIVET SIMONE ÉPOUSE GBAGBO', // 28: Score candidat 3 (MGC)
-      'DON-MELLO SENIN AHOUA JACOB', // 29: Score candidat 4 (INDEPENDANT)
-      'ALASSANE OUATTARA',    // 30: Score candidat 5 (RHDP)
+      'AUTRE_CHAMP',          // 26: Autre champ (pas un score)
+      'SCORE_CANDIDAT_1',     // 27: Score candidat 1
+      'SCORE_CANDIDAT_2',     // 28: Score candidat 2
+      'SCORE_CANDIDAT_3',     // 29: Score candidat 3
+      'SCORE_CANDIDAT_4',     // 30: Score candidat 4
+      'SCORE_CANDIDAT_5',     // 31: Score candidat 5
     ];
 
     // Utiliser le mapping ou créer des noms génériques
-    for (let i = 0; i < Math.max(headers.length, 30); i++) {
+    for (let i = 0; i < Math.max(headers.length, 31); i++) {
       if (i < columnMapping.length) {
         cleanedHeaders[i] = columnMapping[i];
       } else {

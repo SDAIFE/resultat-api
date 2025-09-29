@@ -32,9 +32,9 @@ export class PublicationController {
    * Récupérer les statistiques des départements
    */
   @Get('stats')
-  @Roles('SADMIN', 'ADMIN')
-  async getStats(): Promise<DepartmentStatsResponse> {
-    return this.publicationService.getStats();
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  async getStats(@CurrentUser() user: any): Promise<DepartmentStatsResponse> {
+    return this.publicationService.getStats(user.id, user.role?.code);
   }
 
   /**
@@ -42,8 +42,9 @@ export class PublicationController {
    * Récupérer la liste des départements avec leurs métriques
    */
   @Get('departments')
-  @Roles('SADMIN', 'ADMIN')
+  @Roles('SADMIN', 'ADMIN', 'USER')
   async getDepartments(
+    @CurrentUser() user: any,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @Query('codeDepartement') codeDepartement?: string,
@@ -58,7 +59,7 @@ export class PublicationController {
       search
     };
     
-    return this.publicationService.getDepartments(query);
+    return this.publicationService.getDepartments(query, user.id, user.role?.code);
   }
 
   /**

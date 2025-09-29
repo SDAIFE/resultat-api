@@ -17,33 +17,82 @@ export class PublicationService {
   /**
    * Récupérer les statistiques globales des départements
    */
-  async getStats(): Promise<DepartmentStatsResponse> {
+  async getStats(userId?: string, userRole?: string): Promise<DepartmentStatsResponse> {
+    // Construire la condition WHERE selon le rôle
+    const departmentWhere: any = {};
+    const celWhere: any = {};
+    
+    // Pour USER : seulement les départements assignés
+    if (userRole === 'USER' && userId) {
+      departmentWhere.numeroUtilisateur = userId;
+      
+      // Pour les CELs, filtrer par les départements assignés à l'utilisateur
+      const userDepartments = await this.prisma.tblDept.findMany({
+        where: { numeroUtilisateur: userId },
+        select: { codeDepartement: true }
+      });
+      
+      const departmentCodes = userDepartments.map(d => d.codeDepartement);
+      
+      if (departmentCodes.length > 0) {
+        celWhere.lieuxVote = {
+          some: {
+            departement: {
+              codeDepartement: { in: departmentCodes }
+            }
+          }
+        };
+      } else {
+        // Si aucun département assigné, retourner des stats vides
+        return {
+          totalDepartments: 0,
+          publishedDepartments: 0,
+          pendingDepartments: 0,
+          totalCels: 0,
+          importedCels: 0,
+          pendingCels: 0,
+          publicationRate: 0
+        };
+      }
+    }
+    // Pour ADMIN et SADMIN : toutes les données (pas de filtre)
+
     // Compter les départements
-    const totalDepartments = await this.prisma.tblDept.count();
+    const totalDepartments = await this.prisma.tblDept.count({ where: departmentWhere });
     
     // Compter les départements publiés
     const publishedDepartments = await this.prisma.tblDept.count({
-      where: { statutPublication: 'PUBLISHED' }
+      where: { 
+        ...departmentWhere,
+        statutPublication: 'PUBLISHED' 
+      }
     });
     
     // Compter les départements en attente
     const pendingDepartments = await this.prisma.tblDept.count({
       where: { 
+        ...departmentWhere,
         statutPublication: { not: 'PUBLISHED' }
       }
     });
 
     // Compter les CELs
-    const totalCels = await this.prisma.tblCel.count();
+    const totalCels = await this.prisma.tblCel.count({ where: celWhere });
     
     // CELs importées (statut I + P)
     const importedCels = await this.prisma.tblCel.count({
-      where: { etatResultatCellule: { in: ['I', 'P'] } }
+      where: { 
+        ...celWhere,
+        etatResultatCellule: { in: ['I', 'P'] } 
+      }
     });
     
     // CELs en attente (statut N)
     const pendingCels = await this.prisma.tblCel.count({
-      where: { etatResultatCellule: 'N' }
+      where: { 
+        ...celWhere,
+        etatResultatCellule: 'N' 
+      }
     });
 
     // Calculer le taux de publication
@@ -65,7 +114,7 @@ export class PublicationService {
   /**
    * Récupérer la liste des départements avec leurs métriques
    */
-  async getDepartments(query: DepartmentListQuery): Promise<DepartmentListResponse> {
+  async getDepartments(query: DepartmentListQuery, userId?: string, userRole?: string): Promise<DepartmentListResponse> {
     const {
       page = 1,
       limit = 10,
@@ -76,6 +125,12 @@ export class PublicationService {
 
     // Construire les filtres
     const where: any = {};
+    
+    // Pour USER : seulement les départements assignés
+    if (userRole === 'USER' && userId) {
+      where.numeroUtilisateur = userId;
+    }
+    // Pour ADMIN et SADMIN : toutes les données (pas de filtre)
     
     if (codeDepartement) {
       where.codeDepartement = codeDepartement;

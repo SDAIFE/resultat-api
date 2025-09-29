@@ -102,7 +102,7 @@ export class UsersService {
   }
 
   /**
-   * Récupérer tous les utilisateurs avec pagination
+   * Récupérer tous les utilisateurs avec pagination et statut de connexion
    */
   async findAll(page: number = 1, limit: number = 10, search?: string): Promise<UserListResponseDto> {
     const skip = (page - 1) * limit;
@@ -134,6 +134,17 @@ export class UsersService {
               id: true,
               codeCellule: true,
               libelleCellule: true,
+            },
+          },
+          sessions: {
+            where: {
+              expiresAt: { gt: new Date() }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: {
+              createdAt: true,
+              expiresAt: true,
             },
           },
         },
@@ -171,6 +182,17 @@ export class UsersService {
             id: true,
             codeCellule: true,
             libelleCellule: true,
+          },
+        },
+        sessions: {
+          where: {
+            expiresAt: { gt: new Date() }
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            createdAt: true,
+            expiresAt: true,
           },
         },
       },
@@ -405,6 +427,10 @@ export class UsersService {
    * Formater la réponse utilisateur
    */
   private formatUserResponse(user: any): UserResponseDto {
+    // Déterminer si l'utilisateur est connecté
+    const isConnected = user.sessions && user.sessions.length > 0;
+    const lastConnectionAt = isConnected ? user.sessions[0].createdAt : null;
+
     return {
       id: user.id,
       email: user.email,
@@ -416,6 +442,8 @@ export class UsersService {
         name: user.role.name,
       },
       isActive: user.isActive,
+      isConnected,
+      lastConnectionAt,
       departements: user.departements.map((dept: any) => ({
         id: dept.id,
         codeDepartement: dept.codeDepartement,
