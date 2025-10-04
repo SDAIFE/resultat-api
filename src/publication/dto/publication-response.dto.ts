@@ -71,3 +71,46 @@ export class DepartmentListQuery {
   publicationStatus?: 'PUBLISHED' | 'CANCELLED' | 'PENDING';
   search?: string;
 }
+
+// ===========================================
+// DTOs pour les données agrégées par département
+// ===========================================
+
+export class CelAggregatedData {
+  codeCellule: string;
+  libelleCellule: string;
+  populationHommes: number;
+  populationFemmes: number;
+  populationTotale: number;
+  personnesAstreintes: number;
+  votantsHommes: number;
+  votantsFemmes: number;
+  totalVotants: number;
+  tauxParticipation: number;
+  bulletinsNuls: number;
+  suffrageExprime: number;
+  bulletinsBlancs: number;
+  score1: number;
+  score2: number;
+  score3: number;
+  score4: number;
+  score5: number;
+}
+
+export class DepartmentAggregatedData {
+  codeDepartement: string;
+  libelleDepartement: string;
+  inscrits: number;
+  votants: number;
+  participation: number;
+  nombreBureaux: number;
+  cels: CelAggregatedData[];
+}
+
+export class DepartmentDataResponse {
+  departments: DepartmentAggregatedData[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}

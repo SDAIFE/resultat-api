@@ -7,7 +7,10 @@ import {
   PublicationActionResult,
   DepartmentDetailsResponse,
   DepartmentListQuery,
-  CelData
+  CelData,
+  DepartmentDataResponse,
+  DepartmentAggregatedData,
+  CelAggregatedData
 } from './dto/publication-response.dto';
 
 @Injectable()
@@ -478,5 +481,241 @@ export class PublicationService {
       default:
         return 'PENDING';
     }
+  }
+
+  /**
+   * Récupérer les données agrégées par département avec CELs
+   * Optimisé pour éviter la limite de 2100 paramètres SQL Server
+   */
+  async getDepartmentsData(
+    query: { page: number; limit: number; codeDepartement?: string; search?: string },
+    userId?: string,
+    userRole?: string
+  ): Promise<DepartmentDataResponse> {
+    const { page, limit, codeDepartement, search } = query;
+    const skip = (page - 1) * limit;
+
+    // Construire la condition WHERE selon le rôle
+    let departmentWhere: any = {};
+    
+    // Pour USER : seulement les départements assignés
+    if (userRole === 'USER' && userId) {
+      departmentWhere.numeroUtilisateur = userId;
+    }
+    // Pour ADMIN et SADMIN : tous les départements (pas de filtre)
+
+    // Ajouter les filtres optionnels
+    if (codeDepartement) {
+      departmentWhere.codeDepartement = codeDepartement;
+    }
+    
+    if (search) {
+      departmentWhere.libelleDepartement = {
+        contains: search,
+        mode: 'insensitive'
+      };
+    }
+
+    // 1. Récupérer les départements avec pagination
+    const [departments, total] = await Promise.all([
+      this.prisma.tblDept.findMany({
+        where: departmentWhere,
+        skip,
+        take: limit,
+        orderBy: { codeDepartement: 'asc' },
+        select: {
+          id: true,
+          codeDepartement: true,
+          libelleDepartement: true
+        }
+      }),
+      this.prisma.tblDept.count({ where: departmentWhere })
+    ]);
+
+    // 2. Pour chaque département, récupérer les CELs avec données agrégées
+    const departmentsData = await Promise.all(
+      departments.map(async (dept) => {
+        // Récupérer les CELs de ce département (statut I ou P)
+        const cels = await this.prisma.tblCel.findMany({
+          where: {
+            etatResultatCellule: { in: ['I', 'P'] },
+            lieuxVote: {
+              some: {
+                codeDepartement: dept.codeDepartement
+              }
+            }
+          },
+          select: {
+            codeCellule: true,
+            libelleCellule: true
+          }
+        });
+
+        // Récupérer les données d'import pour ces CELs
+        const celCodes = cels.map(cel => cel.codeCellule);
+        const importData = await this.prisma.tblImportExcelCel.findMany({
+          where: {
+            codeCellule: { in: celCodes },
+            statutImport: 'COMPLETED'
+          },
+          select: {
+            codeCellule: true,
+            populationHommes: true,
+            populationFemmes: true,
+            populationTotale: true,
+            personnesAstreintes: true,
+            votantsHommes: true,
+            votantsFemmes: true,
+            totalVotants: true,
+            tauxParticipation: true,
+            bulletinsNuls: true,
+            suffrageExprime: true,
+            bulletinsBlancs: true,
+            score1: true,
+            score2: true,
+            score3: true,
+            score4: true,
+            score5: true
+          }
+        });
+
+        // Grouper les données par CEL
+        const celDataMap = new Map<string, any[]>();
+        importData.forEach(data => {
+          if (!celDataMap.has(data.codeCellule)) {
+            celDataMap.set(data.codeCellule, []);
+          }
+          celDataMap.get(data.codeCellule)!.push(data);
+        });
+
+        // Agréger les données par CEL
+        const celsAggregated: CelAggregatedData[] = cels.map(cel => {
+          const celData = celDataMap.get(cel.codeCellule) || [];
+          
+          // Calculer les totaux pour cette CEL
+          const aggregated = celData.reduce((acc, data) => {
+            acc.populationHommes += this.parseNumber(data.populationHommes) || 0;
+            acc.populationFemmes += this.parseNumber(data.populationFemmes) || 0;
+            acc.populationTotale += this.parseNumber(data.populationTotale) || 0;
+            acc.personnesAstreintes += this.parseNumber(data.personnesAstreintes) || 0;
+            acc.votantsHommes += this.parseNumber(data.votantsHommes) || 0;
+            acc.votantsFemmes += this.parseNumber(data.votantsFemmes) || 0;
+            acc.totalVotants += this.parseNumber(data.totalVotants) || 0;
+            acc.bulletinsNuls += this.parseNumber(data.bulletinsNuls) || 0;
+            acc.suffrageExprime += this.parseNumber(data.suffrageExprime) || 0;
+            acc.bulletinsBlancs += this.parseNumber(data.bulletinsBlancs) || 0;
+            acc.score1 += this.parseNumber(data.score1) || 0;
+            acc.score2 += this.parseNumber(data.score2) || 0;
+            acc.score3 += this.parseNumber(data.score3) || 0;
+            acc.score4 += this.parseNumber(data.score4) || 0;
+            acc.score5 += this.parseNumber(data.score5) || 0;
+            
+            // Calculer le taux de participation moyen
+            const tauxParticipation = this.parsePercentage(data.tauxParticipation) || 0;
+            acc.tauxParticipationSum += tauxParticipation;
+            acc.tauxParticipationCount++;
+            
+            return acc;
+          }, {
+            populationHommes: 0,
+            populationFemmes: 0,
+            populationTotale: 0,
+            personnesAstreintes: 0,
+            votantsHommes: 0,
+            votantsFemmes: 0,
+            totalVotants: 0,
+            tauxParticipationSum: 0,
+            tauxParticipationCount: 0,
+            bulletinsNuls: 0,
+            suffrageExprime: 0,
+            bulletinsBlancs: 0,
+            score1: 0,
+            score2: 0,
+            score3: 0,
+            score4: 0,
+            score5: 0
+          });
+
+          return {
+            codeCellule: cel.codeCellule,
+            libelleCellule: cel.libelleCellule,
+            populationHommes: aggregated.populationHommes,
+            populationFemmes: aggregated.populationFemmes,
+            populationTotale: aggregated.populationTotale,
+            personnesAstreintes: aggregated.personnesAstreintes,
+            votantsHommes: aggregated.votantsHommes,
+            votantsFemmes: aggregated.votantsFemmes,
+            totalVotants: aggregated.totalVotants,
+            tauxParticipation: aggregated.tauxParticipationCount > 0 
+              ? Math.round((aggregated.tauxParticipationSum / aggregated.tauxParticipationCount) * 100) / 100 
+              : 0,
+            bulletinsNuls: aggregated.bulletinsNuls,
+            suffrageExprime: aggregated.suffrageExprime,
+            bulletinsBlancs: aggregated.bulletinsBlancs,
+            score1: aggregated.score1,
+            score2: aggregated.score2,
+            score3: aggregated.score3,
+            score4: aggregated.score4,
+            score5: aggregated.score5
+          };
+        });
+
+        // Calculer les métriques du département
+        const deptMetrics = celsAggregated.reduce((acc, cel) => {
+          acc.inscrits += cel.populationTotale;
+          acc.votants += cel.totalVotants;
+          acc.nombreBureaux += celDataMap.get(cel.codeCellule)?.length || 0;
+          return acc;
+        }, { inscrits: 0, votants: 0, nombreBureaux: 0 });
+
+        const participation = deptMetrics.inscrits > 0 
+          ? Math.round((deptMetrics.votants / deptMetrics.inscrits) * 100 * 100) / 100 
+          : 0;
+
+        return {
+          codeDepartement: dept.codeDepartement,
+          libelleDepartement: dept.libelleDepartement,
+          inscrits: deptMetrics.inscrits,
+          votants: deptMetrics.votants,
+          participation,
+          nombreBureaux: deptMetrics.nombreBureaux,
+          cels: celsAggregated
+        };
+      })
+    );
+
+    return {
+      departments: departmentsData,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    };
+  }
+
+  /**
+   * Convertit une chaîne en nombre, retourne 0 si invalide
+   */
+  private parseNumber(value: string | null | undefined): number {
+    if (!value || value === '') return 0;
+    
+    // Nettoyer la valeur (enlever les virgules, espaces, etc.)
+    const cleaned = value.toString().replace(/[,\s]/g, '');
+    const parsed = parseFloat(cleaned);
+    
+    return isNaN(parsed) ? 0 : Math.round(parsed);
+  }
+
+  /**
+   * Convertit un pourcentage en nombre décimal
+   */
+  private parsePercentage(value: string | null | undefined): number {
+    if (!value || value === '') return 0;
+    
+    // Nettoyer la valeur (enlever le % et les espaces)
+    const cleaned = value.toString().replace(/[%\s]/g, '');
+    const parsed = parseFloat(cleaned);
+    
+    return isNaN(parsed) ? 0 : parsed;
   }
 }

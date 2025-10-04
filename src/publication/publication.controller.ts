@@ -15,7 +15,8 @@ import {
   DepartmentListResponse, 
   PublicationActionResult,
   DepartmentDetailsResponse,
-  DepartmentListQuery
+  DepartmentListQuery,
+  DepartmentDataResponse
 } from './dto/publication-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -98,5 +99,28 @@ export class PublicationController {
     @Param('id') id: string
   ): Promise<DepartmentDetailsResponse> {
     return this.publicationService.getDepartmentDetails(id);
+  }
+
+  /**
+   * 6️⃣ GET /api/publications/departments/:codeDepartement/data
+   * Récupérer les données agrégées d'un département avec ses CELs
+   */
+  @Get('departments/:codeDepartement/data')
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  async getDepartmentData(
+    @Param('codeDepartement') codeDepartement: string,
+    @CurrentUser() user: any,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('search') search?: string
+  ): Promise<DepartmentDataResponse> {
+    const query = {
+      page,
+      limit,
+      codeDepartement,
+      search
+    };
+    
+    return this.publicationService.getDepartmentsData(query, user.id, user.role?.code);
   }
 }
