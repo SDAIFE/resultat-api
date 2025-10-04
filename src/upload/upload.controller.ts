@@ -27,8 +27,7 @@ import * as fs from 'fs';
 export class UploadController {
   constructor(private readonly uploadService: UploadService) {}
 
-
-  /**
+/**
    * Upload et traitement d'un fichier Excel
    */
   @Post('excel')
