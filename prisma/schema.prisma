@@ -237,6 +237,7 @@ model TblParrain {
   id String @id @default(cuid())
   codeParrain String @unique @map("COD_PAR")
   libelleParrain String @map("LIB_PAR")
+  sigle String? @map("SIG_PAR")
   
   // Relations
   candidats TblCandidat[]
