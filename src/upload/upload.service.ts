@@ -471,7 +471,8 @@ export class UploadService {
     page: number = 1,
     limit: number = 10,
     userId: string,
-    userRole: string
+    userRole: string,
+    codeCellules?: string[]
   ): Promise<ExcelImportListResponseDto> {
     const skip = (page - 1) * limit;
     
@@ -482,9 +483,29 @@ export class UploadService {
       }
     };
 
-    // Pour USER : seulement ses CELs assignées
+    // Filtrage par codeCellules si spécifié
+    if (codeCellules && codeCellules.length > 0) {
+      where.codeCellule = { in: codeCellules };
+    }
+
+    // Pour USER : CELs des départements attribués
     if (userRole === 'USER') {
-      where.numeroUtilisateur = userId;
+      // Récupérer les départements attribués à l'utilisateur
+      const departementsAssignes = await this.prisma.tblDept.findMany({
+        where: { numeroUtilisateur: userId },
+        select: { codeDepartement: true },
+      });
+      
+      if (departementsAssignes.length > 0) {
+        where.lieuxVote = {
+          some: {
+            codeDepartement: { in: departementsAssignes.map(d => d.codeDepartement) },
+          },
+        };
+      } else {
+        // Si l'utilisateur n'a pas de départements assignés, retourner un résultat vide
+        where.id = 'no-departments-assigned';
+      }
     }
     // Pour ADMIN et SADMIN : toutes les CELs
 
@@ -690,9 +711,24 @@ export class UploadService {
     // Construire la condition WHERE selon le rôle
     const where: any = {};
     
-    // Pour USER : seulement ses CELs assignées
+    // Pour USER : CELs des départements attribués
     if (userRole === 'USER' && userId) {
-      where.numeroUtilisateur = userId;
+      // Récupérer les départements attribués à l'utilisateur
+      const departementsAssignes = await this.prisma.tblDept.findMany({
+        where: { numeroUtilisateur: userId },
+        select: { codeDepartement: true },
+      });
+      
+      if (departementsAssignes.length > 0) {
+        where.lieuxVote = {
+          some: {
+            codeDepartement: { in: departementsAssignes.map(d => d.codeDepartement) },
+          },
+        };
+      } else {
+        // Si l'utilisateur n'a pas de départements assignés, retourner des statistiques vides
+        where.id = 'no-departments-assigned';
+      }
     }
     // Pour ADMIN et SADMIN : toutes les CELs (pas de filtre)
     const [

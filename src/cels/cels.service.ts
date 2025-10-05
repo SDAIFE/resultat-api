@@ -392,8 +392,8 @@ export class CelsService {
 
     if (filters.search) {
       where.OR = [
-        { libelleCellule: { contains: filters.search, mode: 'insensitive' } },
-        { codeCellule: { contains: filters.search, mode: 'insensitive' } },
+        { libelleCellule: { contains: filters.search } },
+        { codeCellule: { contains: filters.search } },
       ];
     }
 
@@ -506,4 +506,52 @@ export class CelsService {
       libelleCellule: cel.libelleCellule,
     }));
   }
+
+  /**
+ * Récupérer les CELs d'un utilisateur à partir de ses départements
+ */
+async findByUserDepartments(userId: string): Promise<CelResponseDto[]> {
+  const cels = await this.prisma.tblCel.findMany({
+    where: {
+      lieuxVote: {
+        some: {
+          departement: {
+            numeroUtilisateur: userId
+          }
+        }
+      }
+    },
+    include: {
+      utilisateur: {
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+      lieuxVote: {
+        include: {
+          commune: {
+            select: {
+              codeCommune: true,
+              libelleCommune: true,
+            },
+          },
+          bureauxVote: {
+            select: {
+              id: true,
+              numeroBureauVote: true,
+              inscrits: true,
+              totalVotants: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { libelleCellule: 'asc' },
+  });
+
+  return cels.map(cel => this.formatCelResponse(cel));
+}
 }

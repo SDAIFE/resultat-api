@@ -512,7 +512,6 @@ export class PublicationService {
     if (search) {
       departmentWhere.libelleDepartement = {
         contains: search,
-        mode: 'insensitive'
       };
     }
 

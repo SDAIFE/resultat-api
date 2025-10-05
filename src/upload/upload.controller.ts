@@ -123,8 +123,11 @@ export class UploadController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: any,
+    @Query('codeCellule') codeCellule?: string | string[],
   ): Promise<ExcelImportListResponseDto> {
-    return this.uploadService.getImports(page, limit, user.id, user.role?.code);
+    // Normaliser codeCellule en tableau
+    const codeCellules = Array.isArray(codeCellule) ? codeCellule : (codeCellule ? [codeCellule] : undefined);
+    return this.uploadService.getImports(page, limit, user.id, user.role?.code, codeCellules);
   }
 
   /**
@@ -142,12 +145,12 @@ export class UploadController {
   @Get('imports/cel/:codeCellule')
   @Roles('SADMIN', 'ADMIN', 'USER')
   async getImportsByCel(
-    @Query('codeCellule') codeCellule: string,
+    @Param('codeCellule') codeCellule: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: any,
   ): Promise<ExcelImportListResponseDto> {
-    return this.uploadService.getImports(page, limit, user.id, user.role);
+    return this.uploadService.getImports(page, limit, user.id, user.role?.code, [codeCellule]);
   }
 
   /**
@@ -161,7 +164,7 @@ export class UploadController {
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: any,
   ): Promise<ExcelImportListResponseDto> {
-    return this.uploadService.getImports(page, limit, user.id, user.role);
+    return this.uploadService.getImports(page, limit, user.id, user.role?.code);
   }
 
   /**

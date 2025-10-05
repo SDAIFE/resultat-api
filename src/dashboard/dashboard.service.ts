@@ -18,21 +18,42 @@ export class DashboardService {
    * Optimisé pour éviter la limite de 2100 paramètres SQL Server
    */
   async getUserDashboardStats(userId: string): Promise<UserDashboardStatsDto> {
+    // Récupérer les départements attribués à l'utilisateur
+    const departementsAssignes = await this.prisma.tblDept.findMany({
+      where: { numeroUtilisateur: userId },
+      select: { codeDepartement: true },
+    });
+
+    // Construire la condition WHERE pour les CELs basée sur les départements
+    let celWhereClause: any = {};
+    if (departementsAssignes.length > 0) {
+      celWhereClause = {
+        lieuxVote: {
+          some: {
+            codeDepartement: { in: departementsAssignes.map(d => d.codeDepartement) },
+          },
+        },
+      };
+    } else {
+      // Si l'utilisateur n'a pas de départements assignés, retourner des statistiques vides
+      celWhereClause = { id: 'no-departments-assigned' };
+    }
+
     // Utiliser des requêtes optimisées pour éviter la limite de paramètres
     const [totalCels, celsAvecImport, celsParStatut] = await Promise.all([
       this.prisma.tblCel.count({
-        where: { numeroUtilisateur: userId },
+        where: celWhereClause,
       }),
       this.prisma.tblCel.count({
         where: { 
-          numeroUtilisateur: userId,
+          ...celWhereClause,
           etatResultatCellule: 'I',
         },
       }),
       this.prisma.tblCel.groupBy({
         by: ['etatResultatCellule'],
         _count: { etatResultatCellule: true },
-        where: { numeroUtilisateur: userId },
+        where: celWhereClause,
       })
     ]);
 
@@ -52,12 +73,30 @@ export class DashboardService {
       processing: statutMap['P'] || 0,     // En cours de traitement
     };
 
-    // Dernier import (requête optimisée)
+    // Dernier import (requête optimisée) - basé sur les CELs des départements assignés
+    let dernierImportWhereClause: any = { statutImport: 'COMPLETED' };
+    if (departementsAssignes.length > 0) {
+      // Récupérer les codes de CELs des départements assignés
+      const celCodes = await this.prisma.tblCel.findMany({
+        where: celWhereClause,
+        select: { codeCellule: true },
+      });
+      
+      if (celCodes.length > 0) {
+        dernierImportWhereClause.codeCellule = { 
+          in: celCodes.map(c => c.codeCellule) 
+        };
+      } else {
+        // Aucune CEL trouvée, donc pas d'import possible
+        dernierImportWhereClause.codeCellule = 'no-cels-found';
+      }
+    } else {
+      // Pas de départements assignés, donc pas d'import possible
+      dernierImportWhereClause.codeCellule = 'no-departments-assigned';
+    }
+
     const dernierImport = await this.prisma.tblImportExcelCel.findFirst({
-      where: { 
-        numeroUtilisateur: userId,
-        statutImport: 'COMPLETED',
-      },
+      where: dernierImportWhereClause,
       orderBy: { dateImport: 'desc' },
     });
 
@@ -256,7 +295,22 @@ export class DashboardService {
     
     // Filtrage basé sur le rôle
     if (userRole === 'USER') {
-      where.numeroUtilisateur = userId;
+      // Récupérer les CELs à partir des départements attribués à l'utilisateur
+      const departementsAssignes = await this.prisma.tblDept.findMany({
+        where: { numeroUtilisateur: userId },
+        select: { codeDepartement: true },
+      });
+      
+      if (departementsAssignes.length > 0) {
+        where.lieuxVote = {
+          some: {
+            codeDepartement: { in: departementsAssignes.map(d => d.codeDepartement) },
+          },
+        };
+      } else {
+        // Si l'utilisateur n'a pas de départements assignés, retourner un résultat vide
+        where.id = 'no-departments-assigned';
+      }
     } else if (userRole === 'ADMIN') {
       // CELs des départements assignés à l'admin
       const departementsAssignes = await this.prisma.tblDept.findMany({
@@ -281,8 +335,8 @@ export class DashboardService {
     }
     if (filters.search) {
       where.OR = [
-        { libelleCellule: { contains: filters.search, mode: 'insensitive' } },
-        { codeCellule: { contains: filters.search, mode: 'insensitive' } },
+        { libelleCellule: { contains: filters.search } },
+        { codeCellule: { contains: filters.search } },
       ];
     }
 
@@ -313,7 +367,7 @@ export class DashboardService {
       }),
       this.prisma.tblCel.count({ where }),
     ]);
-
+    console.log(cels);
     return {
       cels: cels.map(cel => this.formatDashboardCel(cel)),
       total,

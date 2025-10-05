@@ -24,8 +24,8 @@ export class DepartementsService {
     
     if (search) {
       where.OR = [
-        { libelleDepartement: { contains: search, mode: 'insensitive' } },
-        { codeDepartement: { contains: search, mode: 'insensitive' } },
+        { libelleDepartement: { contains: search } },
+        { codeDepartement: { contains: search } },
       ];
     }
     

@@ -31,13 +31,6 @@ export class AuthService {
           select: {
             codeDepartement: true
           }
-        },
-        cellules: {
-          select: {
-            id: true,
-            codeCellule: true,
-            libelleCellule: true
-          }
         }
       },
     });
@@ -50,6 +43,28 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Identifiants invalides');
+    }
+
+    // Récupérer les CELs basées sur les départements attribués
+    let cellules: any[] = [];
+    if (user.departements && user.departements.length > 0) {
+      const departementCodes = user.departements.map(d => d.codeDepartement);
+      
+      cellules = await this.prisma.tblCel.findMany({
+        where: {
+          lieuxVote: {
+            some: {
+              codeDepartement: { in: departementCodes },
+            },
+          },
+        },
+        select: {
+          id: true,
+          codeCellule: true,
+          libelleCellule: true,
+        },
+        orderBy: { libelleCellule: 'asc' },
+      });
     }
 
     // Générer les tokens
@@ -67,7 +82,7 @@ export class AuthService {
           code: user.role.code,
         },
         departements: user.departements || [],
-        cellules: user.cellules || [],
+        cellules: cellules || [],
         isActive: user.isActive,
       },
     };
@@ -117,16 +132,31 @@ export class AuthService {
             codeDepartement: true,
             libelleDepartement:true
           }
-        },
-        cellules:{
-          select:{
-            id:true,
-            codeCellule:true,
-            libelleCellule:true
-          }
         }
       },
     });
+
+    // Récupérer les CELs basées sur les départements attribués
+    let cellules: any[] = [];
+    if (user.departements && user.departements.length > 0) {
+      const departementCodes = user.departements.map(d => d.codeDepartement);
+      
+      cellules = await this.prisma.tblCel.findMany({
+        where: {
+          lieuxVote: {
+            some: {
+              codeDepartement: { in: departementCodes },
+            },
+          },
+        },
+        select: {
+          id: true,
+          codeCellule: true,
+          libelleCellule: true,
+        },
+        orderBy: { libelleCellule: 'asc' },
+      });
+    }
 
     // Générer les tokens
     const tokens = await this.generateTokens(user.id);
@@ -143,7 +173,7 @@ export class AuthService {
           code: user.role.code,
         },
         departements: user.departements || [],
-        cellules: user.cellules || [],
+        cellules: cellules,
         isActive: user.isActive,
       },
     };
@@ -168,13 +198,6 @@ export class AuthService {
               departements: {
                 select: {
                   codeDepartement: true
-                }
-              },
-              cellules: {
-                select: {
-                  id: true,
-                  codeCellule: true,
-                  libelleCellule: true
                 }
               }
             } 
@@ -288,19 +311,34 @@ export class AuthService {
           select: {
             codeDepartement: true
           }
-        },
-        cellules: {
-          select: {
-            id: true,
-            codeCellule: true,
-            libelleCellule: true
-          }
         }
       },
     });
 
     if (!user || !user.isActive) {
       return null;
+    }
+
+    // Récupérer les CELs basées sur les départements attribués
+    let cellules: any[] = [];
+    if (user.departements && user.departements.length > 0) {
+      const departementCodes = user.departements.map(d => d.codeDepartement);
+      
+      cellules = await this.prisma.tblCel.findMany({
+        where: {
+          lieuxVote: {
+            some: {
+              codeDepartement: { in: departementCodes },
+            },
+          },
+        },
+        select: {
+          id: true,
+          codeCellule: true,
+          libelleCellule: true,
+        },
+        orderBy: { libelleCellule: 'asc' },
+      });
     }
 
     return {
@@ -310,7 +348,7 @@ export class AuthService {
       lastName: user.lastName,
       role: user.role,
       departements: user.departements || [],
-      cellules: user.cellules || [],
+      cellules: cellules,
       isActive: user.isActive,
     };
   }
