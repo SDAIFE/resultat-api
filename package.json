@@ -39,7 +39,9 @@
     "test:user-creation": "ts-node scripts/test-user-creation-with-lists.ts",
     "test:roles": "ts-node scripts/test-roles.ts",
     "test:user-cels": "ts-node scripts/test-user-creation-with-cels.ts",
-    "create:tbl-lv": "ts-node scripts/create-tbl-lv.ts"
+    "create:tbl-lv": "ts-node scripts/create-tbl-lv.ts",
+    "import:candidats": "ts-node scripts/import-candidats-data.ts",
+    "verify:candidats": "ts-node scripts/verify-candidats-import.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
