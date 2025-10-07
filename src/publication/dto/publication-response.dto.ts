@@ -95,6 +95,7 @@ export class CelAggregatedData {
   score3: number;
   score4: number;
   score5: number;
+  nombreBureaux: number;
 }
 
 export class DepartmentAggregatedData {

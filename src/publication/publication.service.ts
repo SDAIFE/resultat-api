@@ -655,7 +655,8 @@ export class PublicationService {
             score2: aggregated.score2,
             score3: aggregated.score3,
             score4: aggregated.score4,
-            score5: aggregated.score5
+            score5: aggregated.score5,
+            nombreBureaux: celData.length
           };
         });
 
