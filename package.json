@@ -27,6 +27,7 @@
     "analyze:marcory": "ts-node scripts/analyze-marcory-excel.ts",
     "import:carto": "ts-node scripts/import-carto.ts",
     "setup:security": "ts-node scripts/setup-security.ts",
+    "setup:roles": "ts-node scripts/setup-roles.ts",
     "test:auth": "ts-node scripts/test-auth.ts",
     "create:test-user": "ts-node scripts/create-test-user.ts",
     "list:users": "ts-node scripts/list-users.ts",
