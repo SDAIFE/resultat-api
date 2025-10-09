@@ -36,8 +36,10 @@ Allez dans votre service sur Render et configurez :
 
 #### **Build Command** :
 ```bash
-npm install && npx prisma generate && npm run build
+npm ci && npx prisma generate && npm run build
 ```
+
+> **Note** : `npm ci` est recommandé pour les builds en production (plus rapide et fiable que `npm install`)
 
 #### **Start Command** :
 ```bash
@@ -94,9 +96,33 @@ npm run start:prod
 
 Si cela fonctionne en local, cela devrait fonctionner sur Render.
 
-## 🐛 Causes possibles de l'erreur
+## 🐛 Causes possibles des erreurs
 
-### Cause 1 : Mauvais Start Command
+### Erreur 1 : "sh: 1: nest: not found"
+
+**Cause** : La commande `nest` n'est pas disponible lors du build car `@nestjs/cli` était dans `devDependencies`.
+
+**Solution** :
+1. ✅ Déplacez `@nestjs/cli`, `typescript`, et `prisma` vers `dependencies` (déjà fait)
+2. ✅ Modifiez le script build en `"build": "npx nest build"` (déjà fait)
+
+Le fichier `package.json` devrait maintenant contenir :
+```json
+{
+  "scripts": {
+    "build": "npx nest build"
+  },
+  "dependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "typescript": "^5.7.3",
+    "prisma": "^6.17.0",
+    "ts-node": "^10.9.2",
+    // ... autres dépendances
+  }
+}
+```
+
+### Erreur 2 : Mauvais Start Command
 - ❌ Start Command : `node src/dist/src/main.js` (chemin incorrect)
 - ✅ Start Command : `npm run start:prod`
 

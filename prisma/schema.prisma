@@ -29,9 +29,12 @@ model User {
   role        Role     @relation(fields: [roleId], references: [id])
   sessions    Session[]
   departements TblDept[]
+  communes    TblCom[]
   cellules    TblCel[]
   importsExcel TblImportExcelCel[]
   publicationHistory DepartmentPublicationHistory[]
+  communePublicationHistory CommunePublicationHistory[]
+  auditLogs AuditLog[]
   
   @@map("users")
 }
@@ -142,13 +145,17 @@ model TblCom {
   codeSousPrefecture String @map("COD_SP")
   codeCommune String @map("COD_COM")
   libelleCommune String @map("LIB_COM")
+  numeroUtilisateur String? @map("NUM_UTIL")
+  statutPublication String? @map("STAT_PUB")
   
   // Relations
   departement TblDept @relation(fields: [codeDepartement], references: [codeDepartement], onDelete: NoAction, onUpdate: NoAction)
   sousPrefecture TblSp @relation(fields: [codeDepartement, codeSousPrefecture], references: [codeDepartement, codeSousPrefecture], onDelete: NoAction, onUpdate: NoAction)
+  utilisateur User? @relation(fields: [numeroUtilisateur], references: [id])
   lieuxVote TblLv[]
   bureauxVote TblBv[]
   resultats TblResultat[]
+  publicationHistory CommunePublicationHistory[]
   
   @@unique([codeDepartement, codeSousPrefecture, codeCommune])
   @@map("TBL_COM")
@@ -365,3 +372,53 @@ model DepartmentPublicationHistory {
   
   @@map("DEPARTMENT_PUBLICATION_HISTORY")
 }
+
+// Historique des actions de publication des communes (Abidjan)
+model CommunePublicationHistory {
+  id String @id @default(cuid())
+  communeId String @map("COMMUNE_ID")
+  action String @map("ACTION") // PUBLISH, CANCEL, IMPORT
+  userId String @map("USER_ID")
+  timestamp DateTime @default(now()) @map("TIMESTAMP")
+  details String? @map("DETAILS")
+  
+  // Relations
+  commune TblCom @relation(fields: [communeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user User @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  
+  @@map("COMMUNE_PUBLICATION_HISTORY")
+}
+
+// ===========================================
+// AUDIT ET SÉCURITÉ
+// ===========================================
+
+// Logs d'audit pour la traçabilité et la conformité RGPD
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String   // LOGIN, LOGOUT, CREATE_USER, DELETE_USER, PUBLISH, UPLOAD, etc.
+  resource    String   // auth, users, publication, upload, departements
+  resourceId  String?
+  ipAddress   String?
+  userAgent   String?  @db.NVarChar(500)
+  details     String?  @db.NVarChar(Max) // JSON avec détails supplémentaires
+  success     Boolean  @default(true)
+  timestamp   DateTime @default(now())
+  
+  // Relations
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  
+  @@map("audit_logs")
+  @@index([userId, timestamp])
+  @@index([action, timestamp])
+  @@index([resource, timestamp])
+}
+
+// ===========================================
+// VUES SQL
+// ===========================================
+
+// Note: La vue View_Liste_Cel_Par_Departement existe dans la base de données
+// mais n'est pas déclarée dans le schéma Prisma pour éviter les conflits.
+// Utilisez $queryRaw pour l'interroger directement.

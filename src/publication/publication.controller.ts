@@ -16,7 +16,8 @@ import {
   PublicationActionResult,
   DepartmentDetailsResponse,
   DepartmentListQuery,
-  DepartmentDataResponse
+  DepartmentDataResponse,
+  CommuneDetailsResponse
 } from './dto/publication-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -122,5 +123,47 @@ export class PublicationController {
     };
     
     return this.publicationService.getDepartmentsData(query, user.id, user.role?.code);
+  }
+
+  // ===========================================
+  // ENDPOINTS POUR LES COMMUNES (ABIDJAN)
+  // ===========================================
+
+  /**
+   * 7️⃣ POST /api/publications/communes/:id/publish
+   * Publier une commune d'Abidjan
+   */
+  @Post('communes/:id/publish')
+  @Roles('SADMIN', 'ADMIN')
+  async publishCommune(
+    @Param('id') id: string,
+    @CurrentUser() user: any
+  ): Promise<PublicationActionResult> {
+    return this.publicationService.publishCommune(id, user.id);
+  }
+
+  /**
+   * 8️⃣ POST /api/publications/communes/:id/cancel
+   * Annuler la publication d'une commune d'Abidjan
+   */
+  @Post('communes/:id/cancel')
+  @Roles('SADMIN', 'ADMIN')
+  async cancelCommunePublication(
+    @Param('id') id: string,
+    @CurrentUser() user: any
+  ): Promise<PublicationActionResult> {
+    return this.publicationService.cancelCommunePublication(id, user.id);
+  }
+
+  /**
+   * 9️⃣ GET /api/publications/communes/:id/details
+   * Récupérer les détails complets d'une commune d'Abidjan
+   */
+  @Get('communes/:id/details')
+  @Roles('SADMIN', 'ADMIN')
+  async getCommuneDetails(
+    @Param('id') id: string
+  ): Promise<CommuneDetailsResponse> {
+    return this.publicationService.getCommuneDetails(id);
   }
 }

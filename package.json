@@ -42,9 +42,11 @@
     "test:user-cels": "ts-node scripts/test-user-creation-with-cels.ts",
     "create:tbl-lv": "ts-node scripts/create-tbl-lv.ts",
     "import:candidats": "ts-node scripts/import-candidats-data.ts",
-    "verify:candidats": "ts-node scripts/verify-candidats-import.ts"
+    "verify:candidats": "ts-node scripts/verify-candidats-import.ts",
+    "verify:security": "ts-node scripts/verify-security.ts"
   },
   "dependencies": {
+    "@nestjs/cli": "^11.0.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.1",
@@ -63,19 +65,21 @@
     "class-validator": "^0.14.2",
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.2",
+    "express-timeout-handler": "^2.2.2",
+    "file-type": "^16.5.4",
+    "helmet": "^8.1.0",
     "multer": "^2.0.2",
     "nest-winston": "^1.10.2",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "passport-local": "^1.0.0",
+    "prisma": "^6.17.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "winston": "^3.17.0",
-    "xlsx": "^0.18.5",
-    "@nestjs/cli": "^11.0.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.7.3",
-    "prisma": "^6.17.0",
-    "ts-node": "^10.9.2"
+    "winston": "^3.17.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

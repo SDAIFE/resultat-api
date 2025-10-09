@@ -1,5 +1,26 @@
 // DTOs pour les réponses de publication
 
+// ===========================================
+// DTOs pour les entités publiables (Département OU Commune)
+// ===========================================
+
+export interface PublishableEntity {
+  id: string;
+  code: string; // "022-004" pour commune, "001" pour département
+  libelle: string; // "ABIDJAN - COCODY" ou "AGBOVILLE"
+  type: 'DEPARTMENT' | 'COMMUNE';
+  totalCels: number;
+  importedCels: number;
+  pendingCels: number;
+  publicationStatus: 'PUBLISHED' | 'CANCELLED' | 'PENDING';
+  lastUpdate: string;
+  cels: CelData[];
+  
+  // Champs optionnels selon le type
+  codeDepartement?: string; // Pour les communes
+  codeCommune?: string; // Pour les communes
+}
+
 export class DepartmentStatsResponse {
   totalDepartments: number;
   publishedDepartments: number;
@@ -32,7 +53,7 @@ export class DepartmentData {
 }
 
 export class DepartmentListResponse {
-  departments: DepartmentData[];
+  entities: PublishableEntity[]; // Peut contenir départements ET communes
   total: number;
   page: number;
   limit: number;
@@ -42,7 +63,8 @@ export class DepartmentListResponse {
 export class PublicationActionResult {
   success: boolean;
   message: string;
-  department?: DepartmentData;
+  entity?: PublishableEntity; // Peut être un département ou une commune
+  department?: DepartmentData; // Gardé pour compatibilité
   error?: string;
 }
 
@@ -114,4 +136,39 @@ export class DepartmentDataResponse {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+// ===========================================
+// DTOs pour les communes (Abidjan)
+// ===========================================
+
+export class CommuneData {
+  id: string;
+  codeCommune: string;
+  codeDepartement: string;
+  libelleCommune: string;
+  totalCels: number;
+  importedCels: number;
+  pendingCels: number;
+  publicationStatus: 'PUBLISHED' | 'CANCELLED' | 'PENDING';
+  lastUpdate: string;
+  cels: CelData[];
+}
+
+export class CommuneDetailsResponse {
+  commune: CommuneData;
+  cels: {
+    codeCellule: string;
+    libelleCellule: string;
+    statut: 'N' | 'I' | 'P';
+    dateImport?: string;
+    nombreLignesImportees: number;
+    nombreLignesEnErreur: number;
+  }[];
+  history: {
+    action: 'PUBLISH' | 'CANCEL' | 'IMPORT';
+    timestamp: string;
+    user: string;
+    details?: string;
+  }[];
 }

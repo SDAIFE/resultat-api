@@ -1,4 +1,5 @@
-import { IsEmail, IsString, MinLength, IsOptional, IsArray, IsBoolean } from 'class-validator';
+import { IsEmail, IsString, IsOptional, IsArray, IsBoolean } from 'class-validator';
+import { IsStrongPassword } from '../../auth/decorators/is-strong-password.decorator';
 
 export class CreateUserDto {
   @IsEmail({}, { message: 'Email invalide' })
@@ -11,7 +12,7 @@ export class CreateUserDto {
   lastName: string;
 
   @IsString({ message: 'Le mot de passe est requis' })
-  @MinLength(6, { message: 'Le mot de passe doit contenir au moins 6 caractères' })
+  @IsStrongPassword()
   password: string;
 
   @IsOptional()

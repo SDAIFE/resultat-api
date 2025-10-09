@@ -10,7 +10,8 @@ import {
   ParseIntPipe,
   DefaultValuePipe,
   ParseEnumPipe,
-  Param
+  Param,
+  BadRequestException
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
@@ -21,6 +22,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
+import * as FileType from 'file-type';
 
 @Controller('upload')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -29,12 +32,18 @@ export class UploadController {
 
 /**
    * Upload et traitement d'un fichier Excel
+   * 🔒 SÉCURITÉ : 
+   * - Validation des magic bytes (pas seulement MIME type)
+   * - Limite de taille réduite à 10MB
+   * - Noms de fichiers générés aléatoirement
+   * - Validation du chemin pour éviter path traversal
    */
   @Post('excel')
   @Roles('SADMIN', 'ADMIN', 'USER')
   @UseInterceptors(FileInterceptor('file', {
     storage: undefined, // Utiliser la mémoire pour avoir accès au buffer
     fileFilter: (req, file, callback) => {
+      // Validation basique du MIME type (sera complétée par validation magic bytes)
       const allowedMimes = [
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
         'application/vnd.ms-excel', // .xls
@@ -51,7 +60,8 @@ export class UploadController {
       }
     },
     limits: {
-      fileSize: 50 * 1024 * 1024, // 50MB
+      fileSize: 10 * 1024 * 1024, // 🔒 SÉCURITÉ : Réduit à 10MB (au lieu de 50MB)
+      files: 1, // Un seul fichier à la fois
     },
   }))
   async uploadExcel(
@@ -61,11 +71,33 @@ export class UploadController {
     @Query('keepFile', new DefaultValuePipe('true')) keepFile: string
   ): Promise<ExcelImportResponseDto> {
     if (!file) {
-      throw new Error('Aucun fichier fourni');
+      throw new BadRequestException('Aucun fichier fourni');
+    }
+
+    if (!file.buffer) {
+      throw new BadRequestException('Impossible de lire le contenu du fichier');
+    }
+
+    // 🔒 SÉCURITÉ : Valider le type réel du fichier via magic bytes
+    let fileType: FileType.FileTypeResult | undefined;
+    try {
+      fileType = await FileType.fromBuffer(file.buffer);
+    } catch (error) {
+      // Si la détection échoue, on continue avec la validation MIME
+    }
+    
+    const allowedExtensions = ['xlsx', 'xls', 'csv'];
+    
+    // Pour CSV, fileType peut être undefined car ce n'est pas un format binaire
+    // On vérifie alors le contenu via le MIME type
+    if (fileType && !allowedExtensions.includes(fileType.ext)) {
+      throw new BadRequestException(
+        `Type de fichier invalide. Détecté: ${fileType.ext}. Seuls les fichiers Excel (.xlsx, .xls) et CSV (.csv) sont acceptés.`
+      );
     }
 
     // Créer le dossier uploads s'il n'existe pas
-    const uploadsDir = './uploads';
+    const uploadsDir = path.resolve(process.cwd(), 'uploads');
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
@@ -73,20 +105,27 @@ export class UploadController {
     // Récupérer le nom de la CEL pour le nom de fichier
     const cel = await this.uploadService.getCelInfo(uploadDto.codeCellule);
     if (!cel) {
-      throw new Error('CEL non trouvée');
+      throw new BadRequestException('CEL non trouvée');
     }
     
-    // Générer un nom de fichier basé sur le nom de la CEL
-    const fileExtension = path.extname(file.originalname);
-    const celName = cel.libelleCellule.replace(/[^a-zA-Z0-9]/g, '_'); // Nettoyer le nom pour le système de fichiers
-    const fileName = `${celName}_${Date.now()}${fileExtension}`;
+    // 🔒 SÉCURITÉ : Générer un nom de fichier aléatoire sécurisé
+    const randomName = crypto.randomBytes(16).toString('hex');
+    const fileExtension = fileType ? `.${fileType.ext}` : path.extname(file.originalname);
+    const fileName = `${randomName}${fileExtension}`;
     const filePath = path.join(uploadsDir, fileName);
-
-    // Sauvegarder le fichier
-    if (!file.buffer) {
-      throw new Error('Impossible de lire le contenu du fichier');
+    
+    // 🔒 SÉCURITÉ : Vérifier que le chemin normalisé ne sort pas du dossier uploads
+    const normalizedPath = path.normalize(filePath);
+    if (!normalizedPath.startsWith(uploadsDir)) {
+      throw new BadRequestException('Chemin de fichier invalide');
     }
-    fs.writeFileSync(filePath, file.buffer);
+
+    // Sauvegarder le fichier de manière sécurisée
+    try {
+      fs.writeFileSync(filePath, file.buffer, { mode: 0o600 }); // Permissions restrictives
+    } catch (error) {
+      throw new BadRequestException('Erreur lors de la sauvegarde du fichier');
+    }
 
     try {
       // Traiter le fichier
