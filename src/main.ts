@@ -55,9 +55,13 @@ async function bootstrap() {
   }));
   
   // Configuration CORS pour plusieurs frontends
+  console.log('🔍 DEBUG CORS_ORIGINS (raw):', process.env.CORS_ORIGINS);
+  
   const corsOrigins = process.env.CORS_ORIGINS 
     ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
     : ['http://localhost:3000', 'http://localhost:3001'];
+  
+  console.log('🔍 DEBUG corsOrigins (after split):', corsOrigins);
   
   // 🔒 SÉCURITÉ : Validation stricte des origines CORS
   const validOrigins = corsOrigins.filter(origin => {
@@ -69,6 +73,8 @@ async function bootstrap() {
       return false;
     }
   });
+  
+  console.log('🔍 DEBUG validOrigins (final):', validOrigins);
   
   app.enableCors({
     origin: (origin, callback) => {
