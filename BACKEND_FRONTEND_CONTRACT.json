@@ -1,0 +1,259 @@
+{
+  "version": "1.0",
+  "date": "2025-10-10",
+  "status": "BACKEND_READY",
+  "backend": {
+    "implemented": true,
+    "tested": true,
+    "deployed": "development",
+    "url": {
+      "dev": "http://localhost:3001",
+      "staging": "TBD",
+      "production": "TBD"
+    }
+  },
+  "api": {
+    "version": "v1",
+    "basePath": "/api/v1",
+    "endpoints": {
+      "uploadExcelCsv": {
+        "path": "/upload/excel",
+        "method": "POST",
+        "auth": "Bearer token required",
+        "contentType": "multipart/form-data",
+        "request": {
+          "fields": {
+            "excelFile": {
+              "type": "File",
+              "required": true,
+              "validation": {
+                "extension": [".xlsm"],
+                "maxSize": "10MB",
+                "mimeType": ["application/vnd.ms-excel.sheet.macroEnabled.12"]
+              },
+              "description": "Fichier Excel original (.xlsm uniquement)"
+            },
+            "csvFile": {
+              "type": "File",
+              "required": true,
+              "validation": {
+                "extension": [".csv"],
+                "maxSize": "10MB",
+                "mimeType": ["text/csv", "application/csv"]
+              },
+              "description": "Fichier CSV converti par le frontend"
+            },
+            "codeCellule": {
+              "type": "string",
+              "required": true,
+              "example": "CEC_ABOBO_01",
+              "description": "Code de la cellule électorale"
+            },
+            "nomFichier": {
+              "type": "string",
+              "required": false,
+              "example": "Transmission_Octobre",
+              "description": "Nom personnalisé pour le fichier"
+            },
+            "nombreBv": {
+              "type": "number",
+              "required": false,
+              "example": 145,
+              "description": "Nombre de bureaux de vote"
+            }
+          }
+        },
+        "response": {
+          "success": {
+            "statusCode": [200, 201],
+            "body": {
+              "id": "string",
+              "codeCellule": "string",
+              "nomFichier": "string",
+              "statutImport": "COMPLETED | PENDING | PROCESSING | ERROR",
+              "dateImport": "ISO 8601 string",
+              "nombreLignesImportees": "number",
+              "nombreLignesEnErreur": "number",
+              "excelPath": "string (NEW)",
+              "csvPath": "string (NEW)",
+              "details": {
+                "lignesTraitees": "number",
+                "lignesReussies": "number",
+                "lignesEchouees": "number"
+              }
+            }
+          },
+          "errors": {
+            "400": {
+              "excelFileMissing": "Fichier Excel (.xlsm) manquant",
+              "csvFileMissing": "Fichier CSV manquant",
+              "invalidExtension": "Seuls les fichiers .xlsm sont autorisés. Les fichiers .xlsx et .xls ne sont pas acceptés.",
+              "fileTooLarge": "Fichier trop volumineux (max 10MB)",
+              "validationFailed": "Validation échouée - Erreurs détectées : ..."
+            },
+            "401": "Unauthorized - Token invalide ou manquant",
+            "404": "CEL non trouvée"
+          }
+        }
+      },
+      "uploadCel": {
+        "path": "/upload/cels",
+        "method": "POST",
+        "auth": "Bearer token required",
+        "request": {
+          "fields": {
+            "file": {
+              "type": "File",
+              "required": true,
+              "validation": {
+                "extension": [".pdf", ".jpg", ".png"],
+                "maxSize": "10MB"
+              }
+            },
+            "celCode": {
+              "type": "string",
+              "required": true
+            },
+            "celId": {
+              "type": "string",
+              "required": true
+            }
+          }
+        }
+      },
+      "uploadConsolidation": {
+        "path": "/upload/consolidation",
+        "method": "POST",
+        "auth": "Bearer token required",
+        "request": {
+          "fields": {
+            "file": {
+              "type": "File",
+              "required": true,
+              "validation": {
+                "extension": [".xlsx", ".xls", ".pdf", ".csv"],
+                "maxSize": "10MB"
+              }
+            },
+            "reference": {
+              "type": "string",
+              "required": true
+            },
+            "type": {
+              "type": "string",
+              "required": false
+            }
+          }
+        }
+      }
+    }
+  },
+  "breaking_changes": [
+    {
+      "change": "Fichier Excel doit être .xlsm uniquement",
+      "impact": "Les fichiers .xlsx et .xls sont maintenant REJETÉS",
+      "action_required": "Modifier le frontend pour accepter uniquement .xlsm",
+      "priority": "CRITICAL"
+    },
+    {
+      "change": "2 fichiers requis au lieu de 1",
+      "impact": "FormData doit contenir excelFile ET csvFile",
+      "action_required": "Générer le CSV côté client et envoyer les 2 fichiers",
+      "priority": "CRITICAL"
+    },
+    {
+      "change": "Noms des champs FormData modifiés",
+      "impact": "Champ 'file' n'existe plus, utiliser 'excelFile' et 'csvFile'",
+      "action_required": "Modifier les noms de champs dans FormData",
+      "priority": "CRITICAL"
+    },
+    {
+      "change": "Nouveaux champs dans la réponse",
+      "impact": "Ajout de excelPath et csvPath dans la réponse",
+      "action_required": "Optionnel - afficher/enregistrer ces chemins si nécessaire",
+      "priority": "LOW"
+    }
+  ],
+  "frontend_checklist": [
+    {
+      "task": "Modifier input file pour accepter uniquement .xlsm",
+      "code": "<input type=\"file\" accept=\".xlsm\" />",
+      "completed": false
+    },
+    {
+      "task": "Valider l'extension .xlsm côté client",
+      "code": "if (!file.name.endsWith('.xlsm')) { error }",
+      "completed": false
+    },
+    {
+      "task": "Générer le CSV automatiquement",
+      "code": "const csv = convertXlsmToCsv(xlsmFile);",
+      "completed": false
+    },
+    {
+      "task": "Modifier FormData avec 2 fichiers",
+      "code": "formData.append('excelFile', xlsm); formData.append('csvFile', csv);",
+      "completed": false
+    },
+    {
+      "task": "Gérer les nouveaux champs de réponse",
+      "code": "const { excelPath, csvPath } = response;",
+      "completed": false
+    },
+    {
+      "task": "Afficher les erreurs spécifiques",
+      "code": "if (error.message.includes('.xlsm')) { ... }",
+      "completed": false
+    }
+  ],
+  "test_scenarios": [
+    {
+      "scenario": "Upload fichier .xlsm valide avec CSV",
+      "expected": "200/201 - Import réussi",
+      "priority": "HIGH"
+    },
+    {
+      "scenario": "Upload fichier .xlsx",
+      "expected": "400 - Extension refusée",
+      "priority": "HIGH"
+    },
+    {
+      "scenario": "Upload fichier .xls",
+      "expected": "400 - Extension refusée",
+      "priority": "HIGH"
+    },
+    {
+      "scenario": "Upload sans fichier CSV",
+      "expected": "400 - Fichier CSV manquant",
+      "priority": "HIGH"
+    },
+    {
+      "scenario": "Upload sans fichier Excel",
+      "expected": "400 - Fichier Excel manquant",
+      "priority": "HIGH"
+    },
+    {
+      "scenario": "Upload fichier > 10MB",
+      "expected": "400 - Fichier trop volumineux",
+      "priority": "MEDIUM"
+    },
+    {
+      "scenario": "Upload avec CEL inexistante",
+      "expected": "404 - CEL non trouvée",
+      "priority": "MEDIUM"
+    }
+  ],
+  "documentation": {
+    "frontend_guide": "docs/GUIDE_FRONTEND_UPLOAD_FICHIERS.md",
+    "backend_guide": "docs/GUIDE_BACKEND_STOCKAGE_FICHIERS.md",
+    "integration": "INTEGRATION_FRONTEND_BACKEND.md",
+    "implementation": "IMPLEMENTATION_COMPLETE.md",
+    "test_guide": "test-upload-files/TEST_UPLOAD.md"
+  },
+  "support": {
+    "backend_team": "backend@ceibureau.ci",
+    "frontend_team": "frontend@ceibureau.ci",
+    "slack_channel": "#integration-upload-fichiers"
+  }
+}
+

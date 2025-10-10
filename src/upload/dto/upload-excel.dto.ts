@@ -7,6 +7,12 @@ export enum ImportStatus {
   ERROR = 'ERROR'
 }
 
+/**
+ * DTO pour l'upload de fichiers Excel (.xlsm) + CSV
+ * Le frontend envoie 2 fichiers simultanément :
+ * - excelFile : Fichier .xlsm original
+ * - csvFile : Fichier CSV converti par le frontend
+ */
 export class UploadExcelDto {
   @IsString({ message: 'Le code de la CEL est requis' })
   codeCellule: string;
@@ -20,6 +26,29 @@ export class UploadExcelDto {
   nombreBv?: number;
 }
 
+/**
+ * DTO pour l'upload de fichiers CEL signés (PDF, images)
+ */
+export class UploadCelDto {
+  @IsString({ message: 'Le code de la CEL est requis' })
+  celCode: string;
+
+  @IsString({ message: 'L\'ID de la CEL est requis' })
+  celId: string;
+}
+
+/**
+ * DTO pour l'upload de fichiers de consolidation
+ */
+export class UploadConsolidationDto {
+  @IsString({ message: 'La référence est requise' })
+  reference: string;
+
+  @IsOptional()
+  @IsString({ message: 'Le type doit être une chaîne' })
+  type?: string;
+}
+
 export class ExcelImportResponseDto {
   id: string;
   codeCellule: string;
@@ -30,6 +59,15 @@ export class ExcelImportResponseDto {
   nombreLignesImportees: number;
   nombreLignesEnErreur: number;
   nombreBureauxVote?: number;
+  // Informations géographiques
+  departement?: {
+    codeDepartement: string;
+    libelleDepartement: string;
+  };
+  region?: {
+    codeRegion: string;
+    libelleRegion: string;
+  };
   details: {
     headers: string[];
     colonnesMappees: Record<string, string>;

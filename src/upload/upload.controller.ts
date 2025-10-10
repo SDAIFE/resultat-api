@@ -6,6 +6,7 @@ import {
   UseGuards, 
   UseInterceptors, 
   UploadedFile,
+  UploadedFiles,
   Body,
   ParseIntPipe,
   DefaultValuePipe,
@@ -13,9 +14,9 @@ import {
   Param,
   BadRequestException
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FileFieldsInterceptor } from '@nestjs/platform-express';
 import { UploadService } from './upload.service';
-import { UploadExcelDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus, CelDataResponseDto } from './dto/upload-excel.dto';
+import { UploadExcelDto, UploadCelDto, UploadConsolidationDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus, CelDataResponseDto } from './dto/upload-excel.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -31,124 +32,109 @@ export class UploadController {
   constructor(private readonly uploadService: UploadService) {}
 
 /**
-   * Upload et traitement d'un fichier Excel
+   * Upload et traitement de fichiers Excel (.xlsm) + CSV
    * 🔒 SÉCURITÉ : 
+   * - Validation stricte .xlsm uniquement (pas .xlsx ni .xls)
    * - Validation des magic bytes (pas seulement MIME type)
-   * - Limite de taille réduite à 10MB
-   * - Noms de fichiers générés aléatoirement
-   * - Validation du chemin pour éviter path traversal
+   * - Limite de taille réduite à 10MB par fichier
+   * - Les 2 fichiers sont obligatoires
+   * - Stockage structuré via StorageService
    */
   @Post('excel')
   @Roles('SADMIN', 'ADMIN', 'USER')
-  @UseInterceptors(FileInterceptor('file', {
-    storage: undefined, // Utiliser la mémoire pour avoir accès au buffer
-    fileFilter: (req, file, callback) => {
-      // Validation basique du MIME type (sera complétée par validation magic bytes)
-      const allowedMimes = [
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-        'application/vnd.ms-excel', // .xls
-        'application/vnd.ms-excel.sheet.macroEnabled.12', // .xlsm
-        'text/csv', // .csv
-        'application/csv', // .csv
-        'text/plain', // .csv (certains navigateurs)
-      ];
-      
-      if (allowedMimes.includes(file.mimetype)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Type de fichier non autorisé. Seuls les fichiers Excel (.xlsx, .xls, .xlsm) et CSV (.csv) sont acceptés.'), false);
-      }
-    },
-    limits: {
-      fileSize: 10 * 1024 * 1024, // 🔒 SÉCURITÉ : Réduit à 10MB (au lieu de 50MB)
-      files: 1, // Un seul fichier à la fois
-    },
-  }))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'excelFile', maxCount: 1 },
+      { name: 'csvFile', maxCount: 1 },
+    ], {
+      storage: undefined, // Utiliser la mémoire pour avoir accès au buffer
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 🔒 SÉCURITÉ : 10MB max par fichier
+        files: 2, // Exactement 2 fichiers
+      },
+    })
+  )
   async uploadExcel(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles() files: {
+      excelFile?: Express.Multer.File[];
+      csvFile?: Express.Multer.File[];
+    },
     @Body() uploadDto: UploadExcelDto,
-    @CurrentUser() user: any,
-    @Query('keepFile', new DefaultValuePipe('true')) keepFile: string
+    @CurrentUser() user: any
   ): Promise<ExcelImportResponseDto> {
-    if (!file) {
-      throw new BadRequestException('Aucun fichier fourni');
-    }
-
-    if (!file.buffer) {
-      throw new BadRequestException('Impossible de lire le contenu du fichier');
-    }
-
-    // 🔒 SÉCURITÉ : Valider le type réel du fichier via magic bytes
-    let fileType: FileType.FileTypeResult | undefined;
-    try {
-      fileType = await FileType.fromBuffer(file.buffer);
-    } catch (error) {
-      // Si la détection échoue, on continue avec la validation MIME
+    // 1. ✅ Validation de la présence des 2 fichiers
+    if (!files.excelFile || !files.excelFile[0]) {
+      throw new BadRequestException('Fichier Excel (.xlsm) manquant');
     }
     
-    const allowedExtensions = ['xlsx', 'xls', 'csv'];
-    
-    // Pour CSV, fileType peut être undefined car ce n'est pas un format binaire
-    // On vérifie alors le contenu via le MIME type
-    if (fileType && !allowedExtensions.includes(fileType.ext)) {
+    if (!files.csvFile || !files.csvFile[0]) {
+      throw new BadRequestException('Fichier CSV manquant');
+    }
+
+    const excelFile = files.excelFile[0];
+    const csvFile = files.csvFile[0];
+
+    // 2. ✅ Validation stricte : fichier Excel doit être .xlsm UNIQUEMENT
+    if (!excelFile.originalname.toLowerCase().endsWith('.xlsm')) {
       throw new BadRequestException(
-        `Type de fichier invalide. Détecté: ${fileType.ext}. Seuls les fichiers Excel (.xlsx, .xls) et CSV (.csv) sont acceptés.`
+        'Seuls les fichiers .xlsm sont autorisés. Les fichiers .xlsx et .xls ne sont pas acceptés.'
       );
     }
 
-    // Créer le dossier uploads s'il n'existe pas
-    const uploadsDir = path.resolve(process.cwd(), 'uploads');
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
+    // 3. ✅ Validation des buffers
+    if (!excelFile.buffer || !csvFile.buffer) {
+      throw new BadRequestException('Impossible de lire le contenu des fichiers');
     }
 
-    // Récupérer le nom de la CEL pour le nom de fichier
+    // 4. ✅ Validation du type MIME réel du fichier Excel via magic bytes
+    let excelFileType: FileType.FileTypeResult | undefined;
+    try {
+      excelFileType = await FileType.fromBuffer(excelFile.buffer);
+    } catch (error) {
+      // Si la détection échoue, on continue avec la validation d'extension
+    }
+    
+    // Vérifier que c'est bien un fichier Excel (types MS Office)
+    if (excelFileType) {
+      const validMimeTypes = [
+        'application/vnd.ms-excel.sheet.macroEnabled.12',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/zip', // Les fichiers .xlsm sont des archives ZIP
+      ];
+      
+      if (!validMimeTypes.includes(excelFileType.mime)) {
+        throw new BadRequestException(
+          `Type de fichier Excel invalide. Détecté: ${excelFileType.mime}`
+        );
+      }
+    }
+
+    // 5. ✅ Validation de la taille des fichiers
+    if (excelFile.size > 10 * 1024 * 1024) {
+      throw new BadRequestException('Fichier Excel trop volumineux (max 10MB)');
+    }
+    
+    if (csvFile.size > 10 * 1024 * 1024) {
+      throw new BadRequestException('Fichier CSV trop volumineux (max 10MB)');
+    }
+
+    // 6. ✅ Vérifier que la CEL existe
     const cel = await this.uploadService.getCelInfo(uploadDto.codeCellule);
     if (!cel) {
       throw new BadRequestException('CEL non trouvée');
     }
-    
-    // 🔒 SÉCURITÉ : Générer un nom de fichier aléatoire sécurisé
-    const randomName = crypto.randomBytes(16).toString('hex');
-    const fileExtension = fileType ? `.${fileType.ext}` : path.extname(file.originalname);
-    const fileName = `${randomName}${fileExtension}`;
-    const filePath = path.join(uploadsDir, fileName);
-    
-    // 🔒 SÉCURITÉ : Vérifier que le chemin normalisé ne sort pas du dossier uploads
-    const normalizedPath = path.normalize(filePath);
-    if (!normalizedPath.startsWith(uploadsDir)) {
-      throw new BadRequestException('Chemin de fichier invalide');
-    }
-
-    // Sauvegarder le fichier de manière sécurisée
-    try {
-      fs.writeFileSync(filePath, file.buffer, { mode: 0o600 }); // Permissions restrictives
-    } catch (error) {
-      throw new BadRequestException('Erreur lors de la sauvegarde du fichier');
-    }
 
     try {
-      // Traiter le fichier
-      const result = await this.uploadService.processExcelFile(filePath, uploadDto, user.id);
-      
-      // Gérer la conservation du fichier selon le paramètre
-      const shouldKeepFile = keepFile.toLowerCase() === 'true';
-      if (shouldKeepFile) {
-        console.log(`📁 Fichier sauvegardé: ${filePath}`);
-      } else {
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-          console.log(`🗑️ Fichier supprimé après traitement: ${filePath}`);
-        }
-      }
+      // 7. ✅ Traiter les fichiers avec le service
+      const result = await this.uploadService.processExcelAndCsvFiles(
+        excelFile,
+        csvFile,
+        uploadDto,
+        user.id
+      );
 
       return result;
     } catch (error) {
-      // Nettoyer le fichier temporaire en cas d'erreur seulement
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log(`🗑️ Fichier supprimé après erreur: ${filePath}`);
-      }
       throw error;
     }
   }
@@ -163,10 +149,12 @@ export class UploadController {
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
     @CurrentUser() user: any,
     @Query('codeCellule') codeCellule?: string | string[],
+    @Query('codeRegion') codeRegion?: string,
+    @Query('codeDepartement') codeDepartement?: string,
   ): Promise<ExcelImportListResponseDto> {
     // Normaliser codeCellule en tableau
     const codeCellules = Array.isArray(codeCellule) ? codeCellule : (codeCellule ? [codeCellule] : undefined);
-    return this.uploadService.getImports(page, limit, user.id, user.role?.code, codeCellules);
+    return this.uploadService.getImports(page, limit, user.id, user.role?.code, codeCellules, codeRegion, codeDepartement);
   }
 
   /**
@@ -216,5 +204,130 @@ export class UploadController {
     @CurrentUser() user: any,
   ): Promise<CelDataResponseDto> {
     return this.uploadService.getCelData(codeCellule);
+  }
+
+  /**
+   * Upload d'un fichier CEL signé (PDF, image)
+   * 🔒 SÉCURITÉ :
+   * - Types autorisés : PDF, JPG, PNG
+   * - Taille max : 10MB
+   * - Stockage structuré par code CEL
+   */
+  @Post('cels')
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: undefined,
+      fileFilter: (req, file, callback) => {
+        const allowedMimes = [
+          'application/pdf',
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
+        ];
+        
+        if (allowedMimes.includes(file.mimetype)) {
+          callback(null, true);
+        } else {
+          callback(
+            new Error('Type de fichier non autorisé. Formats acceptés : PDF, JPG, PNG'),
+            false
+          );
+        }
+      },
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB max
+        files: 1,
+      },
+    })
+  )
+  async uploadCelFile(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() uploadDto: UploadCelDto,
+    @CurrentUser() user: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Aucun fichier fourni');
+    }
+
+    // Validation de la taille
+    if (file.size > 10 * 1024 * 1024) {
+      throw new BadRequestException('Fichier trop volumineux. Taille maximale : 10MB');
+    }
+
+    try {
+      const result = await this.uploadService.processCelFile(
+        file,
+        uploadDto,
+        user.id
+      );
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Upload d'un fichier de consolidation
+   * 🔒 SÉCURITÉ :
+   * - Types autorisés : Excel, PDF, CSV
+   * - Taille max : 10MB
+   * - Stockage structuré par date
+   */
+  @Post('consolidation')
+  @Roles('SADMIN', 'ADMIN')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: undefined,
+      fileFilter: (req, file, callback) => {
+        const allowedMimes = [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+          'application/vnd.ms-excel', // .xls
+          'application/pdf',
+          'text/csv',
+          'application/csv',
+        ];
+        
+        if (allowedMimes.includes(file.mimetype)) {
+          callback(null, true);
+        } else {
+          callback(
+            new Error('Type de fichier non autorisé. Formats acceptés : Excel, PDF, CSV'),
+            false
+          );
+        }
+      },
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB max
+        files: 1,
+      },
+    })
+  )
+  async uploadConsolidation(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() uploadDto: UploadConsolidationDto,
+    @CurrentUser() user: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Aucun fichier fourni');
+    }
+
+    // Validation de la taille
+    if (file.size > 10 * 1024 * 1024) {
+      throw new BadRequestException('Fichier trop volumineux. Taille maximale : 10MB');
+    }
+
+    try {
+      const result = await this.uploadService.processConsolidationFile(
+        file,
+        uploadDto,
+        user.id
+      );
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
   }
 }

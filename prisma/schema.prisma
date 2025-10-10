@@ -319,6 +319,8 @@ model TblImportExcelCel {
   id String @id @default(cuid())
   codeCellule String @map("COD_CEL")
   nomFichier String @map("NOM_FICHIER")
+  excelPath String? @map("EXCEL_PATH") // Chemin relatif du fichier .xlsm stocké
+  csvPath String? @map("CSV_PATH") // Chemin relatif du fichier .csv stocké
   ordre String? @map("ORD")
   referenceLieuVote String? @map("REF_LV")
   libelleLieuVote String? @map("LIB_LV")

@@ -8,6 +8,7 @@ import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { DepartementsModule } from './departements/departements.module';
+import { RegionsModule } from './regions/regions.module';
 import { CelsModule } from './cels/cels.module';
 import { UploadModule } from './upload/upload.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -31,6 +32,7 @@ import { AuditModule } from './audit/audit.module';
     AuthModule,
     UsersModule,
     DepartementsModule,
+    RegionsModule,
     CelsModule,
     UploadModule,
     DashboardModule,

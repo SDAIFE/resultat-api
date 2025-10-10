@@ -2,7 +2,8 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../database/prisma.service';
 import { ExcelAnalyzerService } from './excel-analyzer.service';
 import { CsvAnalyzerService } from './csv-analyzer.service';
-import { UploadExcelDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus, CelDataResponseDto, CelDataDto, CelMetricsDto } from './dto/upload-excel.dto';
+import { StorageService } from './storage.service';
+import { UploadExcelDto, UploadCelDto, UploadConsolidationDto, ExcelImportResponseDto, ExcelImportListResponseDto, ExcelImportStatsDto, ImportStatus, CelDataResponseDto, CelDataDto, CelMetricsDto } from './dto/upload-excel.dto';
 import { ExcelParsedDataDto, ExcelValidationResultDto } from './dto/excel-data.dto';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -13,6 +14,7 @@ export class UploadService {
     private prisma: PrismaService,
     private excelAnalyzer: ExcelAnalyzerService,
     private csvAnalyzer: CsvAnalyzerService,
+    private storageService: StorageService,
   ) {}
 
   /**
@@ -31,7 +33,177 @@ export class UploadService {
   }
 
   /**
-   * Traite un fichier Excel ou CSV uploadé
+   * Traite les fichiers Excel (.xlsm) + CSV uploadés
+   * Nouvelle méthode avec stockage structuré via StorageService
+   */
+  async processExcelAndCsvFiles(
+    excelFile: Express.Multer.File,
+    csvFile: Express.Multer.File,
+    uploadDto: UploadExcelDto,
+    userId: string
+  ): Promise<ExcelImportResponseDto> {
+    const { codeCellule, nombreBv, nomFichier } = uploadDto;
+
+    // 1. ✅ Vérifier que la CEL existe
+    const cel = await this.prisma.tblCel.findUnique({
+      where: { codeCellule },
+    });
+
+    if (!cel) {
+      throw new NotFoundException('CEL non trouvée');
+    }
+
+    try {
+      // 2. ✅ Stocker le fichier Excel (.xlsm) de manière structurée
+      const excelPath = await this.storageService.storeExcelFile({
+        file: excelFile,
+        codeCellule,
+        nomFichier: nomFichier || excelFile.originalname,
+      });
+
+      console.log(`📥 Fichier Excel stocké: ${excelPath}`);
+
+      // 3. ✅ Stocker le fichier CSV de manière structurée
+      const csvPath = await this.storageService.storeCsvFile({
+        file: csvFile,
+        codeCellule,
+        nomFichier: nomFichier 
+          ? nomFichier.replace(/\.xlsm$/, '.csv')
+          : csvFile.originalname,
+      });
+
+      console.log(`📥 Fichier CSV stocké: ${csvPath}`);
+
+      // 4. ✅ Analyser le fichier CSV
+      const uploadDir = this.storageService.getUploadDirectory();
+      const fullCsvPath = path.join(uploadDir, csvPath);
+      
+      const analysis = await this.csvAnalyzer.analyzeCsvStructure(fullCsvPath);
+      const mapping = this.csvAnalyzer.mapCsvColumnsToDbFields(analysis.headers);
+      const lieuVoteMap = this.csvAnalyzer.extractLieuVoteFromData(analysis.dataRows);
+
+      // 5. ✅ Valider les données avec contrôles stricts
+      const validation = await this.validateExcelData(analysis.dataRows, mapping);
+      
+      if (!validation.isValid) {
+        // Construire un message d'erreur détaillé
+        let errorMessage = 'Validation échouée - Erreurs détectées :\n';
+        
+        if (validation.colonnesManquantes.length > 0) {
+          errorMessage += `\n• Colonnes manquantes : ${validation.colonnesManquantes.join(', ')}`;
+        }
+        
+        if (validation.lignesEnErreur.length > 0) {
+          errorMessage += '\n• Erreurs de saisie détectées :';
+          validation.lignesEnErreur.forEach(ligne => {
+            errorMessage += `\n  - Ligne ${ligne.ligne} : ${ligne.erreurs.join('; ')}`;
+          });
+        }
+        
+        errorMessage += '\n\nVeuillez corriger ces erreurs avant de réessayer l\'import.';
+        
+        throw new BadRequestException(errorMessage);
+      }
+
+      // 6. ✅ Traiter et importer les données avec les chemins des fichiers
+      const processedData = await this.processExcelDataWithPaths(
+        analysis.dataRows, 
+        mapping, 
+        codeCellule, 
+        cel.libelleCellule, 
+        userId, 
+        lieuVoteMap,
+        excelPath,
+        csvPath
+      );
+
+      // 7. ✅ Retourner le résultat avec les chemins des fichiers
+      return {
+        ...this.formatImportResponse(null, analysis, mapping, validation, processedData),
+        excelPath,
+        csvPath,
+      } as any;
+
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Traite un fichier CEL signé (PDF, image)
+   */
+  async processCelFile(
+    file: Express.Multer.File,
+    uploadDto: UploadCelDto,
+    userId: string
+  ) {
+    const { celCode, celId } = uploadDto;
+
+    try {
+      // Stocker le fichier CEL
+      const filePath = await this.storageService.storeCelFile({
+        file,
+        celCode,
+        celId,
+      });
+
+      console.log(`📋 Fichier CEL stocké: ${filePath}`);
+
+      // TODO: Enregistrer dans la base de données si nécessaire
+      // await this.prisma.tblCelFile.create({ ... });
+
+      return {
+        success: true,
+        fileId: celId,
+        filePath,
+        fileName: file.originalname,
+        fileSize: file.size,
+        message: 'Fichier CEL uploadé avec succès',
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Traite un fichier de consolidation
+   */
+  async processConsolidationFile(
+    file: Express.Multer.File,
+    uploadDto: UploadConsolidationDto,
+    userId: string
+  ) {
+    const { reference, type } = uploadDto;
+
+    try {
+      // Stocker le fichier de consolidation
+      const filePath = await this.storageService.storeConsolidationFile({
+        file,
+        reference,
+        type,
+      });
+
+      console.log(`📦 Fichier de consolidation stocké: ${filePath}`);
+
+      // TODO: Enregistrer dans la base de données si nécessaire
+      // await this.prisma.tblConsolidation.create({ ... });
+
+      return {
+        success: true,
+        filePath,
+        fileName: file.originalname,
+        fileSize: file.size,
+        reference,
+        type,
+        message: 'Fichier de consolidation uploadé avec succès',
+      };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Traite un fichier Excel ou CSV uploadé (LEGACY - à conserver pour compatibilité)
    */
   async processExcelFile(
     filePath: string,
@@ -60,6 +232,8 @@ export class UploadService {
       let analysis: any;
       let mapping: any;
       
+      let lieuVoteMap: Record<string, string> | undefined;
+      
       if (fileExtension === '.csv') {
         // Analyser le fichier CSV
         analysis = await this.csvAnalyzer.analyzeCsvStructure(filePath);
@@ -68,8 +242,7 @@ export class UploadService {
         mapping = this.csvAnalyzer.mapCsvColumnsToDbFields(analysis.headers);
         
         // Extraire les libellés des lieux de vote
-        const lieuVoteMap = this.csvAnalyzer.extractLieuVoteFromData(analysis.dataRows);
-        analysis.lieuVoteMap = lieuVoteMap;
+        lieuVoteMap = this.csvAnalyzer.extractLieuVoteFromData(analysis.dataRows);
       } else {
         // Analyser le fichier Excel
         analysis = await this.excelAnalyzer.analyzeCelFile(filePath, codeCellule, nombreBv);
@@ -102,7 +275,7 @@ export class UploadService {
       }
 
       // Insérer directement les données dans TblImportExcelCel
-      const processedData = await this.processExcelData(analysis.dataRows, mapping, codeCellule, cel.libelleCellule, userId, analysis.lieuVoteMap);
+      const processedData = await this.processExcelData(analysis.dataRows, mapping, codeCellule, cel.libelleCellule, userId, lieuVoteMap);
 
       return this.formatImportResponse(null, analysis, mapping, validation, processedData);
 
@@ -349,7 +522,127 @@ export class UploadService {
   }
 
   /**
-   * Traite les données Excel/CSV et les prépare pour l'insertion
+   * Traite les données Excel/CSV avec chemins des fichiers et les prépare pour l'insertion
+   */
+  private async processExcelDataWithPaths(
+    dataRows: any[][],
+    mapping: Record<string, { field: string; index: number; type: string }>,
+    codeCellule: string,
+    nomFichier: string,
+    userId: string,
+    lieuVoteMap?: Record<string, string>,
+    excelPath?: string,
+    csvPath?: string
+  ): Promise<{ lignesTraitees: number; lignesReussies: number; lignesEchouees: number; codeCellule: string; nomFichier: string }> {
+    let lignesTraitees = 0;
+    let lignesReussies = 0;
+    let lignesEchouees = 0;
+
+    // Vérifier et supprimer les données existantes pour ce codeCellule
+    const existingData = await this.prisma.tblImportExcelCel.findMany({
+      where: { codeCellule }
+    });
+
+    if (existingData.length > 0) {
+      console.log(`🗑️  Suppression de ${existingData.length} enregistrements existants pour la CEL ${codeCellule}`);
+      await this.prisma.tblImportExcelCel.deleteMany({
+        where: { codeCellule }
+      });
+      console.log(`✅ Suppression terminée pour la CEL ${codeCellule}`);
+    }
+
+    for (const row of dataRows) {
+      lignesTraitees++;
+      
+      try {
+        const dataToInsert: any = {
+          codeCellule,
+          nomFichier,
+          numeroUtilisateur: userId,
+          excelPath, // ✅ Nouveau : chemin du fichier Excel
+          csvPath,   // ✅ Nouveau : chemin du fichier CSV
+        };
+
+        // Mapper chaque colonne
+        Object.entries(mapping).forEach(([colName, mappingInfo]) => {
+          const value = row[mappingInfo.index];
+          
+          if (mappingInfo.type === 'split' && colName.includes('CEC')) {
+            // Traitement spécial pour la colonne CEC (Excel)
+            const celInfo = this.excelAnalyzer.extractCelInfoFromCecColumn(value);
+            dataToInsert.referenceLieuVote = celInfo.referenceLieuVote;
+            dataToInsert.libelleLieuVote = celInfo.libelleLieuVote;
+          } else {
+            // Mapping direct
+            dataToInsert[mappingInfo.field] = value ? String(value) : null;
+          }
+        });
+
+        // Pour les fichiers CSV, ajouter le libellé du lieu de vote si disponible
+        if (lieuVoteMap && dataToInsert.referenceLieuVote) {
+          dataToInsert.libelleLieuVote = lieuVoteMap[dataToInsert.referenceLieuVote] || dataToInsert.libelleLieuVote;
+        }
+
+        // Insérer dans la base de données
+        await this.prisma.tblImportExcelCel.create({
+          data: dataToInsert,
+        });
+
+        // Alimenter la table TblBv si les données sont complètes
+        if (dataToInsert.referenceLieuVote && dataToInsert.numeroBureauVote) {
+          await this.insertBureauVote(dataToInsert);
+        }
+
+        lignesReussies++;
+      } catch (error) {
+        lignesEchouees++;
+        console.error(`Erreur lors du traitement de la ligne ${lignesTraitees}:`, error);
+      }
+    }
+
+    // Mettre à jour le statut de la CEL après l'import
+    if (lignesReussies > 0) {
+      await this.prisma.tblCel.update({
+        where: { codeCellule },
+        data: {
+          etatResultatCellule: 'I', // I: Importé
+        },
+      });
+      console.log(`✅ Statut de la CEL ${codeCellule} mis à jour: I (Importé)`);
+      
+      // Mettre à jour le statut des imports dans TblImportExcelCel
+      await this.prisma.tblImportExcelCel.updateMany({
+        where: {
+          codeCellule,
+          nomFichier,
+          numeroUtilisateur: userId,
+        },
+        data: {
+          statutImport: 'COMPLETED',
+        },
+      });
+      console.log(`✅ Statut des imports mis à jour: COMPLETED pour ${lignesReussies} lignes`);
+    } else if (lignesEchouees > 0) {
+      // Marquer les imports comme échoués si aucune ligne n'a réussi
+      await this.prisma.tblImportExcelCel.updateMany({
+        where: {
+          codeCellule,
+          nomFichier,
+          numeroUtilisateur: userId,
+        },
+        data: {
+          statutImport: 'ERROR',
+          messageErreur: `Échec de l'import: ${lignesEchouees} lignes ont échoué`,
+        },
+      });
+      console.log(`❌ Statut des imports mis à jour: ERROR pour ${lignesEchouees} lignes`);
+    }
+
+    return { lignesTraitees, lignesReussies, lignesEchouees, codeCellule, nomFichier };
+  }
+
+  /**
+   * Traite les données Excel/CSV et les prépare pour l'insertion (LEGACY)
    */
   private async processExcelData(
     dataRows: any[][],
@@ -472,7 +765,9 @@ export class UploadService {
     limit: number = 10,
     userId: string,
     userRole: string,
-    codeCellules?: string[]
+    codeCellules?: string[],
+    codeRegion?: string,
+    codeDepartement?: string
   ): Promise<ExcelImportListResponseDto> {
     const skip = (page - 1) * limit;
     
@@ -488,6 +783,22 @@ export class UploadService {
       where.codeCellule = { in: codeCellules };
     }
 
+    // Filtrage par région ou département
+    if (codeRegion || codeDepartement) {
+      where.lieuxVote = where.lieuxVote || {};
+      where.lieuxVote.some = where.lieuxVote.some || {};
+      
+      if (codeDepartement) {
+        // Filtre par département (prioritaire sur la région)
+        where.lieuxVote.some.codeDepartement = codeDepartement;
+      } else if (codeRegion) {
+        // Filtre par région via le département
+        where.lieuxVote.some.departement = {
+          codeRegion: codeRegion
+        };
+      }
+    }
+
     // Pour USER : CELs des départements attribués
     if (userRole === 'USER') {
       // Récupérer les départements attribués à l'utilisateur
@@ -497,10 +808,10 @@ export class UploadService {
       });
       
       if (departementsAssignes.length > 0) {
-        where.lieuxVote = {
-          some: {
-            codeDepartement: { in: departementsAssignes.map(d => d.codeDepartement) },
-          },
+        where.lieuxVote = where.lieuxVote || {};
+        where.lieuxVote.some = {
+          ...where.lieuxVote.some,
+          codeDepartement: { in: departementsAssignes.map(d => d.codeDepartement) },
         };
       } else {
         // Si l'utilisateur n'a pas de départements assignés, retourner un résultat vide
@@ -517,6 +828,16 @@ export class UploadService {
         orderBy: { codeCellule: 'asc' },
         include: {
           utilisateur: true, // Inclure les infos de l'utilisateur assigné
+          lieuxVote: {
+            include: {
+              departement: {
+                include: {
+                  region: true // Inclure la région via le département
+                }
+              }
+            },
+            take: 1 // Prendre le premier lieu de vote pour extraire département/région
+          },
           _count: {
             select: {
               lieuxVote: true // Compter les lieux de vote
@@ -1047,6 +1368,27 @@ export class UploadService {
     // Utiliser le nombre de bureaux de vote directement depuis la table TblCel
     let nombreBureauxVote = cel.nombreBureauxVote || 0;
 
+    // Extraire les informations de département et région depuis le premier lieu de vote
+    let departement: { codeDepartement: string; libelleDepartement: string } | undefined;
+    let region: { codeRegion: string; libelleRegion: string } | undefined;
+    
+    if (cel.lieuxVote && cel.lieuxVote.length > 0) {
+      const firstLieuVote = cel.lieuxVote[0];
+      if (firstLieuVote.departement) {
+        departement = {
+          codeDepartement: firstLieuVote.departement.codeDepartement,
+          libelleDepartement: firstLieuVote.departement.libelleDepartement
+        };
+        
+        if (firstLieuVote.departement.region) {
+          region = {
+            codeRegion: firstLieuVote.departement.region.codeRegion,
+            libelleRegion: firstLieuVote.departement.region.libelleRegion
+          };
+        }
+      }
+    }
+
     return {
       id: cel.id,
       codeCellule: cel.codeCellule,
@@ -1059,6 +1401,8 @@ export class UploadService {
       nombreLignesImportees: totalLignesImportees,
       nombreLignesEnErreur: 0,
       nombreBureauxVote: nombreBureauxVote,
+      departement,
+      region,
       details: {
         headers: [],
         colonnesMappees: {},
