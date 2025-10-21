@@ -316,10 +316,11 @@ export class PublicationService {
 
           return {
             id: commune.id,
-            code: `022-${commune.codeCommune}`,
+            code: `022-${commune.codeSousPrefecture}-${commune.codeCommune}`, // ✅ Format complet (3 parties)
             libelle: `ABIDJAN - ${commune.libelleCommune}`,
             type: 'COMMUNE' as const,
             codeDepartement: '022',
+            codeSousPrefecture: commune.codeSousPrefecture, // ✅ Nouveau champ
             codeCommune: commune.codeCommune,
             totalCels,
             importedCels,
@@ -1053,6 +1054,252 @@ export class PublicationService {
 
     return {
       departments: departmentsData,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    };
+  }
+
+  /**
+   * Récupérer les données agrégées d'une commune d'Abidjan avec ses CELs
+   * @param query - Paramètres de pagination et de filtrage
+   * @param userId - ID de l'utilisateur (pour filtrage par rôle)
+   * @param userRole - Rôle de l'utilisateur
+   * @returns Les données agrégées de la commune avec ses CELs
+   */
+  async getCommuneData(
+    query: { page: number; limit: number; codeCommune?: string; search?: string },
+    userId?: string,
+    userRole?: string
+  ): Promise<DepartmentDataResponse> {
+    const { page, limit, codeCommune, search } = query;
+    const skip = (page - 1) * limit;
+
+    // Construire la condition WHERE selon le rôle
+    let communeWhere: any = {};
+    
+    // Pour USER : seulement les communes assignées
+    if (userRole === 'USER' && userId) {
+      communeWhere.numeroUtilisateur = userId;
+    }
+    // Pour ADMIN et SADMIN : toutes les communes (pas de filtre)
+
+    // Ajouter les filtres optionnels
+    if (codeCommune) {
+      // Support de plusieurs formats :
+      // - Format complet : "022-001-001" (dept-sp-com)
+      // - Format court : "001" (seulement commune)
+      
+      if (codeCommune.includes('-')) {
+        const parts = codeCommune.split('-');
+        
+        if (parts.length === 3) {
+          // Format complet "022-001-001" → département + sous-préfecture + commune
+          communeWhere.codeDepartement = parts[0];
+          communeWhere.codeSousPrefecture = parts[1];
+          communeWhere.codeCommune = parts[2];
+        } else if (parts.length === 2) {
+          // Format intermédiaire "022-001" → département + sous-préfecture
+          // Supposer que la dernière partie est la sous-préfecture
+          communeWhere.codeDepartement = parts[0];
+          communeWhere.codeSousPrefecture = parts[1];
+        }
+      } else {
+        // Format court "001" → seulement la commune
+        // Impossible de déterminer avec certitude, risque d'ambiguïté
+        communeWhere.codeCommune = codeCommune;
+        console.warn(`⚠️  Code commune "${codeCommune}" est ambigu. Recommandation : utiliser le format complet "022-SP-COM"`);
+      }
+    }
+    
+    if (search) {
+      communeWhere.libelleCommune = {
+        contains: search,
+      };
+    }
+
+    // 1. Récupérer les communes avec pagination
+    const [communes, total] = await Promise.all([
+      this.prisma.tblCom.findMany({
+        where: communeWhere,
+        skip,
+        take: limit,
+        orderBy: { codeCommune: 'asc' },
+        select: {
+          id: true,
+          codeDepartement: true,
+          codeSousPrefecture: true, // ✅ AJOUTÉ
+          codeCommune: true,
+          libelleCommune: true
+        }
+      }),
+      this.prisma.tblCom.count({ where: communeWhere })
+    ]);
+
+    // 2. Pour chaque commune, récupérer les CELs avec données agrégées
+    const communesData = await Promise.all(
+      communes.map(async (commune) => {
+        // Récupérer les CELs de cette commune via la relation lieuxVote
+        // ✅ IMPORTANT : Filtrer par codeDepartement + codeSousPrefecture + codeCommune
+        const celsRaw = await this.prisma.tblCel.findMany({
+          where: {
+            lieuxVote: {
+              some: {
+                codeDepartement: commune.codeDepartement,
+                codeSousPrefecture: commune.codeSousPrefecture, // ✅ AJOUTÉ
+                codeCommune: commune.codeCommune
+              }
+            }
+          },
+          select: {
+            codeCellule: true,
+            libelleCellule: true,
+            etatResultatCellule: true
+          }
+        });
+        
+        // Filtrer seulement les CELs avec statut I ou P
+        const celsFiltered = celsRaw.filter(cel => 
+          cel.etatResultatCellule && ['I', 'P'].includes(cel.etatResultatCellule)
+        );
+
+        // Récupérer les données d'import pour ces CELs
+        const celCodes = celsFiltered.map(cel => cel.codeCellule);
+        const importData = await this.prisma.tblImportExcelCel.findMany({
+          where: {
+            codeCellule: { in: celCodes },
+            statutImport: 'COMPLETED'
+          },
+          select: {
+            codeCellule: true,
+            populationHommes: true,
+            populationFemmes: true,
+            populationTotale: true,
+            personnesAstreintes: true,
+            votantsHommes: true,
+            votantsFemmes: true,
+            totalVotants: true,
+            tauxParticipation: true,
+            bulletinsNuls: true,
+            suffrageExprime: true,
+            bulletinsBlancs: true,
+            score1: true,
+            score2: true,
+            score3: true,
+            score4: true,
+            score5: true
+          }
+        });
+
+        // Grouper les données par CEL
+        const celDataMap = new Map<string, any[]>();
+        importData.forEach(data => {
+          if (!celDataMap.has(data.codeCellule)) {
+            celDataMap.set(data.codeCellule, []);
+          }
+          celDataMap.get(data.codeCellule)!.push(data);
+        });
+
+        // Agréger les données par CEL
+        const celsAggregated = celsFiltered.map(cel => {
+          const celData = celDataMap.get(cel.codeCellule) || [];
+          
+          // Calculer les totaux pour cette CEL
+          const aggregated = celData.reduce((acc, data) => {
+            acc.populationHommes += this.parseNumber(data.populationHommes);
+            acc.populationFemmes += this.parseNumber(data.populationFemmes);
+            acc.populationTotale += this.parseNumber(data.populationTotale);
+            acc.personnesAstreintes += this.parseNumber(data.personnesAstreintes);
+            acc.votantsHommes += this.parseNumber(data.votantsHommes);
+            acc.votantsFemmes += this.parseNumber(data.votantsFemmes);
+            acc.totalVotants += this.parseNumber(data.totalVotants);
+            acc.bulletinsNuls += this.parseNumber(data.bulletinsNuls);
+            acc.suffrageExprime += this.parseNumber(data.suffrageExprime);
+            acc.bulletinsBlancs += this.parseNumber(data.bulletinsBlancs);
+            acc.score1 += this.parseNumber(data.score1);
+            acc.score2 += this.parseNumber(data.score2);
+            acc.score3 += this.parseNumber(data.score3);
+            acc.score4 += this.parseNumber(data.score4);
+            acc.score5 += this.parseNumber(data.score5);
+            
+            // Calculer le taux de participation moyen
+            const tauxParticipation = this.parsePercentage(data.tauxParticipation);
+            acc.tauxParticipationSum += tauxParticipation;
+            acc.tauxParticipationCount++;
+            
+            return acc;
+          }, {
+            populationHommes: 0,
+            populationFemmes: 0,
+            populationTotale: 0,
+            personnesAstreintes: 0,
+            votantsHommes: 0,
+            votantsFemmes: 0,
+            totalVotants: 0,
+            tauxParticipationSum: 0,
+            tauxParticipationCount: 0,
+            bulletinsNuls: 0,
+            suffrageExprime: 0,
+            bulletinsBlancs: 0,
+            score1: 0,
+            score2: 0,
+            score3: 0,
+            score4: 0,
+            score5: 0
+          });
+
+          return {
+            codeCellule: cel.codeCellule,
+            libelleCellule: cel.libelleCellule,
+            populationHommes: aggregated.populationHommes,
+            populationFemmes: aggregated.populationFemmes,
+            populationTotale: aggregated.populationTotale,
+            personnesAstreintes: aggregated.personnesAstreintes,
+            votantsHommes: aggregated.votantsHommes,
+            votantsFemmes: aggregated.votantsFemmes,
+            totalVotants: aggregated.totalVotants,
+            tauxParticipation: aggregated.tauxParticipationCount > 0 
+              ? Math.round((aggregated.tauxParticipationSum / aggregated.tauxParticipationCount) * 100) / 100 
+              : 0,
+            bulletinsNuls: aggregated.bulletinsNuls,
+            suffrageExprime: aggregated.suffrageExprime,
+            bulletinsBlancs: aggregated.bulletinsBlancs,
+            score1: aggregated.score1,
+            score2: aggregated.score2,
+            score3: aggregated.score3,
+            score4: aggregated.score4,
+            score5: aggregated.score5,
+            nombreBureaux: celData.length
+          };
+        });
+
+        // Calculer les métriques de la commune
+        const communeMetrics = celsAggregated.reduce((acc, cel) => {
+          acc.inscrits += cel.populationTotale;
+          acc.votants += cel.totalVotants;
+          acc.nombreBureaux += celDataMap.get(cel.codeCellule)?.length || 0;
+          return acc;
+        }, { inscrits: 0, votants: 0, nombreBureaux: 0 });
+
+        const participation = communeMetrics.inscrits > 0 
+          ? Math.round((communeMetrics.votants / communeMetrics.inscrits) * 100 * 100) / 100 
+          : 0;
+
+        return {
+          codeDepartement: `${commune.codeDepartement}-${commune.codeSousPrefecture}-${commune.codeCommune}`, // ✅ Format: "022-001-004" (complet)
+          libelleDepartement: `ABIDJAN - ${commune.libelleCommune}`, // Format: "ABIDJAN - COCODY"
+          inscrits: communeMetrics.inscrits,
+          votants: communeMetrics.votants,
+          participation,
+          nombreBureaux: communeMetrics.nombreBureaux,
+          cels: celsAggregated
+        };
+      })
+    );
+
+    return {
+      departments: communesData, // On utilise "departments" pour la compatibilité avec le DTO
       total,
       page,
       limit,

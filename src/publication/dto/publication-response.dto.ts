@@ -6,7 +6,7 @@
 
 export interface PublishableEntity {
   id: string;
-  code: string; // "022-004" pour commune, "001" pour département
+  code: string; // "022-001-004" pour commune (format complet 3 parties), "001" pour département
   libelle: string; // "ABIDJAN - COCODY" ou "AGBOVILLE"
   type: 'DEPARTMENT' | 'COMMUNE';
   totalCels: number;
@@ -17,7 +17,8 @@ export interface PublishableEntity {
   cels: CelData[];
   
   // Champs optionnels selon le type
-  codeDepartement?: string; // Pour les communes
+  codeDepartement?: string; // Pour les communes et départements
+  codeSousPrefecture?: string; // ✅ NOUVEAU - Pour les communes d'Abidjan
   codeCommune?: string; // Pour les communes
 }
 

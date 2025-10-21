@@ -166,4 +166,27 @@ export class PublicationController {
   ): Promise<CommuneDetailsResponse> {
     return this.publicationService.getCommuneDetails(id);
   }
+
+  /**
+   * 🔟 GET /api/publications/communes/:codeCommune/data
+   * Récupérer les données agrégées d'une commune d'Abidjan avec ses CELs
+   */
+  @Get('communes/:codeCommune/data')
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  async getCommuneData(
+    @Param('codeCommune') codeCommune: string,
+    @CurrentUser() user: any,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('search') search?: string
+  ): Promise<DepartmentDataResponse> {
+    const query = {
+      page,
+      limit,
+      codeCommune,
+      search
+    };
+    
+    return this.publicationService.getCommuneData(query, user.id, user.role?.code);
+  }
 }
