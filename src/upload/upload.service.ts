@@ -917,7 +917,7 @@ export class UploadService {
       this.prisma.tblCel.count({ where }),
     ]);
 
-    // Récupérer les données d'import pour chaque CEL
+    // Récupérer les données d'import pour chaque CEL avec l'utilisateur qui a importé
     const celCodes = cels.map(cel => cel.codeCellule);
     const importData = await this.prisma.tblImportExcelCel.findMany({
       where: {
@@ -926,7 +926,22 @@ export class UploadService {
       select: {
         codeCellule: true,
         nomFichier: true,
-        dateImport: true
+        dateImport: true,
+        numeroUtilisateur: true,
+        utilisateur: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            role: {
+              select: {
+                code: true,
+                name: true
+              }
+            }
+          }
+        }
       }
     });
 
@@ -1534,13 +1549,16 @@ export class UploadService {
     const celImportData = importDataMap?.get(cel.codeCellule) || [];
     const totalLignesImportees = celImportData.length;
     
-    // Récupérer la date d'import la plus récente
-    const dateImport = celImportData.length > 0 
+    // Récupérer l'import le plus récent pour obtenir les infos de l'utilisateur
+    const latestImport = celImportData.length > 0 
       ? celImportData.reduce((latest, data) => 
-          data.dateImport > latest ? data.dateImport : latest, 
-          celImportData[0].dateImport
+          data.dateImport > latest.dateImport ? data : latest, 
+          celImportData[0]
         )
-      : cel.updatedAt || cel.createdAt;
+      : null;
+    
+    // Récupérer la date d'import la plus récente
+    const dateImport = latestImport?.dateImport || cel.updatedAt || cel.createdAt;
     
     // Utiliser le nom de la CEL comme nom de fichier
     const nomFichier = cel.libelleCellule;
@@ -1569,6 +1587,23 @@ export class UploadService {
       }
     }
 
+    // Formater les informations de l'utilisateur qui a importé
+    let importePar: any = undefined;
+    if (latestImport?.utilisateur) {
+      importePar = {
+        id: latestImport.utilisateur.id,
+        numeroUtilisateur: latestImport.numeroUtilisateur, // Depuis TblImportExcelCel
+        nom: latestImport.utilisateur.lastName,
+        prenom: latestImport.utilisateur.firstName,
+        email: latestImport.utilisateur.email,
+        nomComplet: `${latestImport.utilisateur.firstName} ${latestImport.utilisateur.lastName}`,
+        role: latestImport.utilisateur.role ? {
+          code: latestImport.utilisateur.role.code,
+          libelle: latestImport.utilisateur.role.name
+        } : undefined
+      };
+    }
+
     return {
       id: cel.id,
       codeCellule: cel.codeCellule,
@@ -1581,6 +1616,7 @@ export class UploadService {
       nombreLignesImportees: totalLignesImportees,
       nombreLignesEnErreur: 0,
       nombreBureauxVote: nombreBureauxVote,
+      importePar,
       departement,
       region,
       details: {

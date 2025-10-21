@@ -59,6 +59,19 @@ export class ExcelImportResponseDto {
   nombreLignesImportees: number;
   nombreLignesEnErreur: number;
   nombreBureauxVote?: number;
+  // Informations de l'utilisateur qui a importé
+  importePar?: {
+    id: string;
+    numeroUtilisateur: string;
+    nom: string;
+    prenom: string;
+    email: string;
+    nomComplet: string;
+    role?: {
+      code: string;
+      libelle: string;
+    };
+  };
   // Informations géographiques
   departement?: {
     codeDepartement: string;
