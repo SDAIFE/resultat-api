@@ -39,6 +39,14 @@ export class UploadController {
    * - Limite de taille réduite à 10MB par fichier
    * - Les 2 fichiers sont obligatoires
    * - Stockage structuré via StorageService
+   * 
+   * ✅ VALIDATION DES DONNÉES :
+   * - Vérification stricte : aucune cellule critique ne doit être vide/null
+   * - Si une cellule vide est détectée :
+   *   → Upload immédiatement interrompu
+   *   → Rollback automatique (nettoyage de tout ce qui a été inséré)
+   *   → Erreur explicite retournée avec ligne et colonne concernées
+   * - Champs obligatoires : referenceLieuVote, numeroBureauVote, populations, votants, scores candidats (score1-5), etc.
    */
   @Post('excel')
   @Roles('SADMIN', 'ADMIN', 'USER')

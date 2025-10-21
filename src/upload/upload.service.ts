@@ -538,6 +538,68 @@ export class UploadService {
     let lignesReussies = 0;
     let lignesEchouees = 0;
 
+    // 🔒 VALIDATION STRICTE : Vérifier qu'aucune cellule critique n'est null/vide
+    const champsObligatoires = [
+      'referenceLieuVote',
+      'numeroBureauVote',
+      'populationTotale',
+      'populationHommes',
+      'populationFemmes',
+      'totalVotants',
+      'votantsHommes',
+      'votantsFemmes',
+      'tauxParticipation',
+      'bulletinsNuls',
+      'bulletinsBlancs',
+      'suffrageExprime',
+      'score1',
+      'score2',
+      'score3',
+      'score4',
+      'score5'
+    ];
+
+    // Vérifier toutes les lignes AVANT toute insertion
+    for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
+      const row = dataRows[rowIndex];
+      const ligneNumero = rowIndex + 13; // Ligne 13+ dans Excel
+
+      // Construire un objet temporaire pour vérifier les valeurs
+      const tempData: any = {};
+      Object.entries(mapping).forEach(([colName, mappingInfo]) => {
+        const value = row[mappingInfo.index];
+        
+        if (mappingInfo.type === 'split' && colName.includes('CEC')) {
+          const celInfo = this.excelAnalyzer.extractCelInfoFromCecColumn(value);
+          tempData.referenceLieuVote = celInfo.referenceLieuVote;
+          tempData.libelleLieuVote = celInfo.libelleLieuVote;
+        } else {
+          tempData[mappingInfo.field] = value;
+        }
+      });
+
+      // Vérifier chaque champ obligatoire
+      for (const champ of champsObligatoires) {
+        const valeur = tempData[champ];
+        
+        // Vérifier si null, undefined, ou chaîne vide
+        if (valeur === null || valeur === undefined || String(valeur).trim() === '') {
+          // Trouver le nom de la colonne correspondante
+          const colonneNom = Object.entries(mapping).find(
+            ([_, info]) => info.field === champ
+          )?.[0] || champ;
+
+          throw new BadRequestException(
+            `❌ Cellule vide détectée - Upload interrompu\n\n` +
+            `• Ligne ${ligneNumero} : La colonne "${colonneNom}" est vide\n` +
+            `• Champ concerné : ${champ}\n\n` +
+            `⚠️ Toutes les cellules critiques doivent être renseignées.\n` +
+            `Veuillez corriger le fichier Excel et réessayer l'import.`
+          );
+        }
+      }
+    }
+
     // Vérifier et supprimer les données existantes pour ce codeCellule
     const existingData = await this.prisma.tblImportExcelCel.findMany({
       where: { codeCellule }
@@ -551,53 +613,60 @@ export class UploadService {
       console.log(`✅ Suppression terminée pour la CEL ${codeCellule}`);
     }
 
-    for (const row of dataRows) {
-      lignesTraitees++;
-      
-      try {
-        const dataToInsert: any = {
-          codeCellule,
-          nomFichier,
-          numeroUtilisateur: userId,
-          excelPath, // ✅ Nouveau : chemin du fichier Excel
-          csvPath,   // ✅ Nouveau : chemin du fichier CSV
-        };
-
-        // Mapper chaque colonne
-        Object.entries(mapping).forEach(([colName, mappingInfo]) => {
-          const value = row[mappingInfo.index];
+    // Utiliser une transaction avec timeout étendu pour garantir le rollback en cas d'erreur
+    try {
+      await this.prisma.$transaction(async (prisma) => {
+        for (const row of dataRows) {
+          lignesTraitees++;
           
-          if (mappingInfo.type === 'split' && colName.includes('CEC')) {
-            // Traitement spécial pour la colonne CEC (Excel)
-            const celInfo = this.excelAnalyzer.extractCelInfoFromCecColumn(value);
-            dataToInsert.referenceLieuVote = celInfo.referenceLieuVote;
-            dataToInsert.libelleLieuVote = celInfo.libelleLieuVote;
-          } else {
-            // Mapping direct
-            dataToInsert[mappingInfo.field] = value ? String(value) : null;
+          const dataToInsert: any = {
+            codeCellule,
+            nomFichier,
+            numeroUtilisateur: userId,
+            excelPath, // ✅ Nouveau : chemin du fichier Excel
+            csvPath,   // ✅ Nouveau : chemin du fichier CSV
+          };
+
+          // Mapper chaque colonne
+          Object.entries(mapping).forEach(([colName, mappingInfo]) => {
+            const value = row[mappingInfo.index];
+            
+            if (mappingInfo.type === 'split' && colName.includes('CEC')) {
+              // Traitement spécial pour la colonne CEC (Excel)
+              const celInfo = this.excelAnalyzer.extractCelInfoFromCecColumn(value);
+              dataToInsert.referenceLieuVote = celInfo.referenceLieuVote;
+              dataToInsert.libelleLieuVote = celInfo.libelleLieuVote;
+            } else {
+              // Mapping direct
+              dataToInsert[mappingInfo.field] = value ? String(value) : null;
+            }
+          });
+
+          // Pour les fichiers CSV, ajouter le libellé du lieu de vote si disponible
+          if (lieuVoteMap && dataToInsert.referenceLieuVote) {
+            dataToInsert.libelleLieuVote = lieuVoteMap[dataToInsert.referenceLieuVote] || dataToInsert.libelleLieuVote;
           }
-        });
 
-        // Pour les fichiers CSV, ajouter le libellé du lieu de vote si disponible
-        if (lieuVoteMap && dataToInsert.referenceLieuVote) {
-          dataToInsert.libelleLieuVote = lieuVoteMap[dataToInsert.referenceLieuVote] || dataToInsert.libelleLieuVote;
+          // Insérer dans la base de données (dans la transaction)
+          await prisma.tblImportExcelCel.create({
+            data: dataToInsert,
+          });
+
+          // Alimenter la table TblBv si les données sont complètes
+          if (dataToInsert.referenceLieuVote && dataToInsert.numeroBureauVote) {
+            await this.insertBureauVoteInTransaction(prisma, dataToInsert);
+          }
+
+          lignesReussies++;
         }
-
-        // Insérer dans la base de données
-        await this.prisma.tblImportExcelCel.create({
-          data: dataToInsert,
-        });
-
-        // Alimenter la table TblBv si les données sont complètes
-        if (dataToInsert.referenceLieuVote && dataToInsert.numeroBureauVote) {
-          await this.insertBureauVote(dataToInsert);
-        }
-
-        lignesReussies++;
-      } catch (error) {
-        lignesEchouees++;
-        console.error(`Erreur lors du traitement de la ligne ${lignesTraitees}:`, error);
-      }
+      }, {
+        maxWait: 60000, // 🔒 Attente maximale : 60 secondes
+        timeout: 120000, // 🔒 Timeout de la transaction : 120 secondes (2 minutes)
+      });
+    } catch (error) {
+      // 🔒 En cas d'erreur, la transaction fait automatiquement un ROLLBACK
+      console.error(`❌ Erreur lors de l'import - Rollback automatique effectué`, error);
+      throw error;
     }
 
     // Mettre à jour le statut de la CEL après l'import
@@ -1315,6 +1384,117 @@ export class UploadService {
       } else {
         // Créer un nouveau bureau de vote
         await this.prisma.tblBv.create({
+          data: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune,
+            codeLieuVote: geoData.codeLieuVote,
+            numeroBureauVote: importData.numeroBureauVote,
+            inscrits: this.parseNumber(importData.populationTotale),
+            populationHommes: this.parseNumber(importData.populationHommes),
+            populationFemmes: this.parseNumber(importData.populationFemmes),
+            personnesAstreintes: this.parseNumber(importData.personnesAstreintes),
+            votantsHommes: this.parseNumber(importData.votantsHommes),
+            votantsFemmes: this.parseNumber(importData.votantsFemmes),
+            totalVotants: this.parseNumber(importData.totalVotants),
+            tauxParticipation: this.parsePercentage(importData.tauxParticipation),
+            bulletinsNuls: this.parseNumber(importData.bulletinsNuls),
+            bulletinsBlancs: this.parseNumber(importData.bulletinsBlancs),
+            suffrageExprime: importData.suffrageExprime
+          }
+        });
+        console.log(`✅ Bureau de vote créé: ${geoData.codeDepartement}-${geoData.codeSousPrefecture}-${geoData.codeCommune}-${geoData.codeLieuVote}-${importData.numeroBureauVote}`);
+      }
+
+    } catch (error) {
+      console.error(`❌ Erreur lors de l'insertion du bureau de vote:`, error);
+      // Ne pas faire échouer l'import principal pour une erreur de bureau de vote
+    }
+  }
+
+  /**
+   * Insère un bureau de vote dans la table TblBv (version transactionnelle)
+   */
+  private async insertBureauVoteInTransaction(prisma: any, importData: any): Promise<void> {
+    try {
+      // Parser le referenceLieuVote
+      const geoData = this.parseReferenceLieuVote(importData.referenceLieuVote);
+      if (!geoData) {
+        console.warn(`Impossible de parser referenceLieuVote: ${importData.referenceLieuVote}`);
+        return;
+      }
+
+      // Vérifier que le lieu de vote existe dans TblLv
+      const lieuVote = await prisma.tblLv.findUnique({
+        where: {
+          codeDepartement_codeSousPrefecture_codeCommune_codeLieuVote: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune,
+            codeLieuVote: geoData.codeLieuVote
+          }
+        }
+      });
+
+      if (!lieuVote) {
+        console.warn(`⚠️ Lieu de vote non trouvé: ${geoData.codeDepartement}-${geoData.codeSousPrefecture}-${geoData.codeCommune}-${geoData.codeLieuVote}`);
+        console.warn(`   Référence originale: ${importData.referenceLieuVote}`);
+        
+        // Chercher des lieux de vote similaires pour diagnostic
+        const similarLv = await prisma.tblLv.findMany({
+          where: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune
+          },
+          take: 3
+        });
+        
+        if (similarLv.length > 0) {
+          console.warn(`   Lieux de vote similaires trouvés:`);
+          similarLv.forEach(lv => {
+            console.warn(`     - ${lv.codeLieuVote}: ${lv.libelleLieuVote}`);
+          });
+        }
+        
+        return;
+      }
+
+      // Vérifier si le bureau de vote existe déjà
+      const existingBv = await prisma.tblBv.findUnique({
+        where: {
+          codeDepartement_codeSousPrefecture_codeCommune_codeLieuVote_numeroBureauVote: {
+            codeDepartement: geoData.codeDepartement,
+            codeSousPrefecture: geoData.codeSousPrefecture,
+            codeCommune: geoData.codeCommune,
+            codeLieuVote: geoData.codeLieuVote,
+            numeroBureauVote: importData.numeroBureauVote
+          }
+        }
+      });
+
+      if (existingBv) {
+        // Mettre à jour le bureau de vote existant
+        await prisma.tblBv.update({
+          where: { id: existingBv.id },
+          data: {
+            inscrits: this.parseNumber(importData.populationTotale),
+            populationHommes: this.parseNumber(importData.populationHommes),
+            populationFemmes: this.parseNumber(importData.populationFemmes),
+            personnesAstreintes: this.parseNumber(importData.personnesAstreintes),
+            votantsHommes: this.parseNumber(importData.votantsHommes),
+            votantsFemmes: this.parseNumber(importData.votantsFemmes),
+            totalVotants: this.parseNumber(importData.totalVotants),
+            tauxParticipation: this.parsePercentage(importData.tauxParticipation),
+            bulletinsNuls: this.parseNumber(importData.bulletinsNuls),
+            bulletinsBlancs: this.parseNumber(importData.bulletinsBlancs),
+            suffrageExprime: importData.suffrageExprime
+          }
+        });
+        console.log(`📝 Bureau de vote mis à jour: ${geoData.codeDepartement}-${geoData.codeSousPrefecture}-${geoData.codeCommune}-${geoData.codeLieuVote}-${importData.numeroBureauVote}`);
+      } else {
+        // Créer un nouveau bureau de vote
+        await prisma.tblBv.create({
           data: {
             codeDepartement: geoData.codeDepartement,
             codeSousPrefecture: geoData.codeSousPrefecture,
