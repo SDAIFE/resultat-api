@@ -17,7 +17,8 @@ import {
   DepartmentDetailsResponse,
   DepartmentListQuery,
   DepartmentDataResponse,
-  CommuneDetailsResponse
+  CommuneDetailsResponse,
+  NationalDataResponse
 } from './dto/publication-response.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -188,5 +189,15 @@ export class PublicationController {
     };
     
     return this.publicationService.getCommuneData(query, user.id, user.role?.code);
+  }
+
+  /**
+   * 🌍 GET /api/publications/national/data
+   * Récupérer les données nationales agrégées (équivalent au tableau de l'image)
+   */
+  @Get('national/data')
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  async getNationalData(): Promise<NationalDataResponse> {
+    return this.publicationService.getNationalData();
   }
 }

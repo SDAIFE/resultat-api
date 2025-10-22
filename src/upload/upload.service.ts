@@ -1036,6 +1036,7 @@ export class UploadService {
     let votantsHommes = 0;
     let votantsFemmes = 0;
     let suffrageExprime = 0;
+    let personnesAstreintesTotal = 0; // ✅ AJOUTÉ
 
     data.forEach(item => {
       // Inscrits
@@ -1058,6 +1059,12 @@ export class UploadService {
 
       // Suffrage exprimé
       suffrageExprime += this.parseNumber(item.suffrageExprime) || 0;
+
+      // ✅ CORRECTION : Personnes astreintes avec gestion des valeurs nulles/vides
+      const personnesAstreintes = this.parseNumber(item.personnesAstreintes);
+      if (personnesAstreintes !== null) {
+        personnesAstreintesTotal += personnesAstreintes;
+      }
     });
 
     // Calculer le taux de participation global
@@ -1075,7 +1082,8 @@ export class UploadService {
         femmes: votantsFemmes
       },
       tauxParticipation: Math.round(tauxParticipation * 100) / 100,
-      suffrageExprime
+      suffrageExprime,
+      personnesAstreintes: personnesAstreintesTotal // ✅ AJOUTÉ
     };
   }
 

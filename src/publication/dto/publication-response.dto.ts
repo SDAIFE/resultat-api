@@ -131,6 +131,45 @@ export class DepartmentAggregatedData {
   cels: CelAggregatedData[];
 }
 
+// ===========================================
+// DTOs pour les données nationales
+// ===========================================
+
+export class NationalDataResponse {
+  // Métriques générales
+  nombreBureauxVote: number;
+  inscrits: number;
+  votants: number;
+  tauxParticipation: number;
+  
+  // Métriques de validité
+  bulletinsNuls: {
+    nombre: number;
+    pourcentage: number;
+  };
+  suffrageExprime: number;
+  bulletinsBlancs: {
+    nombre: number;
+    pourcentage: number;
+  };
+  
+  // Scores des candidats
+  candidats: {
+    numeroOrdre: string;
+    nom: string;
+    parti: string;
+    score: number;
+    pourcentage: number;
+    photo?: string;
+    symbole?: string;
+  }[];
+  
+  // Métadonnées
+  dateCalcul: string;
+  nombreCels: number;
+  nombreCelsImportees: number;
+}
+
 export class DepartmentDataResponse {
   departments: DepartmentAggregatedData[];
   total: number;

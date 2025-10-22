@@ -148,6 +148,7 @@ export class CelMetricsDto {
   };
   tauxParticipation: number;
   suffrageExprime: number;
+  personnesAstreintes: number; // ✅ AJOUTÉ
 }
 
 export class CelDataResponseDto {
