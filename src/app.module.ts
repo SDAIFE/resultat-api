@@ -16,6 +16,7 @@ import { MonitoringModule } from './monitoring/monitoring.module';
 import { RolesModule } from './roles/roles.module';
 import { PublicationModule } from './publication/publication.module';
 import { AuditModule } from './audit/audit.module';
+import { ResultatsModule } from './resultats/resultats.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AuditModule } from './audit/audit.module';
     RolesModule,
     PublicationModule,
     AuditModule,
+    ResultatsModule,
   ],
   controllers: [AppController],
   providers: [
