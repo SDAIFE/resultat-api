@@ -103,81 +103,74 @@ export class PublicationService {
   }
 
   /**
-   * 🚀 MÉTHODE BATCH ULTRA-OPTIMISÉE : Récupérer toutes les données d'import en une requête
-   * Performance : N×1013ms → ~200ms (98% plus rapide pour requêtes multiples)
-   * Évite le problème N+1 en récupérant toutes les données d'import en une fois
+   * 🚀 MÉTHODE BATCH OPTIMISÉE : Récupérer toutes les données d'import en une requête
+   * Utilise Prisma au lieu de $queryRaw pour éviter les problèmes de compatibilité
    */
   private async getAllImportDataForCels(celCodes: string[]): Promise<Map<string, any[]>> {
     if (celCodes.length === 0) {
+      console.log(`🔍 getAllImportDataForCels: Aucun code CEL fourni`);
       return new Map();
     }
 
-    const result = await this.prisma.$queryRaw<Array<{
-      COD_CEL: string;
-      POP_HOM: string;
-      POP_FEM: string;
-      POP_TOTAL: string;
-      PERS_ASTR: string;
-      VOT_HOM: string;
-      VOT_FEM: string;
-      TOTAL_VOT: string;
-      TAUX_PART: string;
-      BUL_NUL: string;
-      SUF_EXP: string;
-      BUL_BLANC: string;
-      SCORE_1: string;
-      SCORE_2: string;
-      SCORE_3: string;
-      SCORE_4: string;
-      SCORE_5: string;
-    }>>`
-      SELECT 
-        COD_CEL,
-        POP_HOM,
-        POP_FEM,
-        POP_TOTAL,
-        PERS_ASTR,
-        VOT_HOM,
-        VOT_FEM,
-        TOTAL_VOT,
-        TAUX_PART,
-        BUL_NUL,
-        SUF_EXP,
-        BUL_BLANC,
-        SCORE_1,
-        SCORE_2,
-        SCORE_3,
-        SCORE_4,
-        SCORE_5
-      FROM TBL_IMPORT_EXCEL_CEL
-      WHERE COD_CEL IN (${celCodes.join(',')})
-        AND STATUT_IMPORT = 'COMPLETED'
-    `;
+    console.log(`🔍 getAllImportDataForCels: Recherche de données pour ${celCodes.length} CELs`);
+    console.log(`🔍 Codes CEL recherchés:`, celCodes);
+
+    // Utiliser Prisma au lieu de $queryRaw pour éviter les problèmes de compatibilité
+    const result = await this.prisma.tblImportExcelCel.findMany({
+      where: {
+        codeCellule: { in: celCodes },
+        statutImport: 'COMPLETED'
+      },
+      select: {
+        codeCellule: true,
+        populationTotale: true,
+        populationHommes: true,
+        populationFemmes: true,
+        personnesAstreintes: true,
+        totalVotants: true,
+        votantsHommes: true,
+        votantsFemmes: true,
+        tauxParticipation: true,
+        bulletinsNuls: true,
+        suffrageExprime: true,
+        bulletinsBlancs: true,
+        score1: true,
+        score2: true,
+        score3: true,
+        score4: true,
+        score5: true
+      }
+    });
+
+    console.log(`📊 getAllImportDataForCels: Résultats trouvés: ${result.length} lignes`);
+    if (result.length > 0) {
+      console.log(`📊 Première ligne trouvée:`, result[0]);
+    }
 
     // Grouper par CEL
     const groupedImportData = new Map<string, any[]>();
     result.forEach(row => {
-      if (!groupedImportData.has(row.COD_CEL)) {
-        groupedImportData.set(row.COD_CEL, []);
+      if (!groupedImportData.has(row.codeCellule)) {
+        groupedImportData.set(row.codeCellule, []);
       }
-      groupedImportData.get(row.COD_CEL)!.push({
-        codeCellule: row.COD_CEL,
-        populationHommes: row.POP_HOM,
-        populationFemmes: row.POP_FEM,
-        populationTotale: row.POP_TOTAL,
-        personnesAstreintes: row.PERS_ASTR,
-        votantsHommes: row.VOT_HOM,
-        votantsFemmes: row.VOT_FEM,
-        totalVotants: row.TOTAL_VOT,
-        tauxParticipation: row.TAUX_PART,
-        bulletinsNuls: row.BUL_NUL,
-        suffrageExprime: row.SUF_EXP,
-        bulletinsBlancs: row.BUL_BLANC,
-        score1: row.SCORE_1,
-        score2: row.SCORE_2,
-        score3: row.SCORE_3,
-        score4: row.SCORE_4,
-        score5: row.SCORE_5
+      groupedImportData.get(row.codeCellule)!.push({
+        codeCellule: row.codeCellule,
+        populationHommes: row.populationHommes,
+        populationFemmes: row.populationFemmes,
+        populationTotale: row.populationTotale,
+        personnesAstreintes: row.personnesAstreintes,
+        votantsHommes: row.votantsHommes,
+        votantsFemmes: row.votantsFemmes,
+        totalVotants: row.totalVotants,
+        tauxParticipation: row.tauxParticipation,
+        bulletinsNuls: row.bulletinsNuls,
+        suffrageExprime: row.suffrageExprime,
+        bulletinsBlancs: row.bulletinsBlancs,
+        score1: row.score1,
+        score2: row.score2,
+        score3: row.score3,
+        score4: row.score4,
+        score5: row.score5
       });
     });
 
@@ -664,6 +657,8 @@ export class PublicationService {
    * Récupérer les détails complets d'un département
    */
   async getDepartmentDetails(departmentId: string): Promise<DepartmentDetailsResponse> {
+    console.log(`🔍 Récupération des détails du département ID: ${departmentId}`);
+    
     // Vérifier que le département existe
     const department = await this.prisma.tblDept.findUnique({
       where: { id: departmentId },
@@ -681,11 +676,15 @@ export class PublicationService {
     });
 
     if (!department) {
+      console.error(`❌ Département non trouvé avec l'ID: ${departmentId}`);
       throw new NotFoundException('Département non trouvé');
     }
 
+    console.log(`✅ Département trouvé: ${department.codeDepartement} - ${department.libelleDepartement}`);
+
     // 🚀 OPTIMISÉ : Récupérer les CELs
     const celsRaw = await this.getCelsForDepartment(department.codeDepartement);
+    console.log(`📊 CELs trouvées: ${celsRaw.length}`);
 
     // Récupérer l'historique des publications
     const history = await this.prisma.departmentPublicationHistory.findMany({
@@ -700,6 +699,8 @@ export class PublicationService {
       },
       orderBy: { timestamp: 'desc' }
     });
+
+    console.log(`📜 Historique trouvé: ${history.length} entrées`);
 
     const departmentData: DepartmentData = {
       id: department.id,
@@ -717,6 +718,13 @@ export class PublicationService {
         dateImport: new Date().toISOString()
       }))
     };
+
+    console.log(`📈 Données du département:`, {
+      totalCels: departmentData.totalCels,
+      importedCels: departmentData.importedCels,
+      pendingCels: departmentData.pendingCels,
+      publicationStatus: departmentData.publicationStatus
+    });
 
     return {
       department: departmentData,
@@ -1010,6 +1018,8 @@ export class PublicationService {
     const { page, limit, codeDepartement, search } = query;
     const skip = (page - 1) * limit;
 
+    console.log(`🔍 getDepartmentsData - Query:`, { page, limit, codeDepartement, search, userId, userRole });
+
     // Construire la condition WHERE selon le rôle
     let departmentWhere: any = {};
     
@@ -1030,6 +1040,8 @@ export class PublicationService {
       };
     }
 
+    console.log(`🔍 departmentWhere:`, departmentWhere);
+
     // 1. Récupérer les départements avec pagination
     const [departments, total] = await Promise.all([
       this.prisma.tblDept.findMany({
@@ -1046,26 +1058,35 @@ export class PublicationService {
       this.prisma.tblDept.count({ where: departmentWhere })
     ]);
 
+    console.log(`📊 Départements trouvés: ${departments.length} sur ${total}`);
+
     // 2. Pour chaque département, récupérer les CELs avec données agrégées
     const departmentsData = await Promise.all(
       departments.map(async (dept) => {
+        console.log(`🔍 Traitement du département: ${dept.codeDepartement} - ${dept.libelleDepartement}`);
+        
         // 🚀 OPTIMISÉ : Récupérer les CELs de ce département
         const celsRaw = await this.getCelsForDepartment(dept.codeDepartement);
+        console.log(`📊 CELs trouvées pour ${dept.codeDepartement}: ${celsRaw.length}`);
         
         // Filtrer seulement les CELs avec statut I ou P
         const celsFiltered = celsRaw.filter(cel => 
           cel.ETA_RESULTAT_CEL && ['I', 'P'].includes(cel.ETA_RESULTAT_CEL)
         );
+        console.log(`📊 CELs importées pour ${dept.codeDepartement}: ${celsFiltered.length}`);
 
         // Récupérer les données d'import pour ces CELs (OPTIMISÉ avec méthode batch)
         const celCodes = celsFiltered.map(cel => cel.COD_CEL);
+        console.log(`🔍 Codes CEL à rechercher pour ${dept.codeDepartement}:`, celCodes);
         const importDataMap = await this.getAllImportDataForCels(celCodes);
+        console.log(`📊 Données d'import récupérées pour ${dept.codeDepartement}: ${importDataMap.size} CELs`);
         
         // Convertir la Map en tableau pour la compatibilité avec le code existant
         const importData: any[] = [];
         importDataMap.forEach((dataArray, celCode) => {
           importData.push(...dataArray);
         });
+        console.log(`📊 Total des lignes d'import pour ${dept.codeDepartement}: ${importData.length}`);
 
         // Grouper les données par CEL
         const celDataMap = new Map<string, any[]>();
@@ -1559,29 +1580,18 @@ export class PublicationService {
       }
     });
 
-    // 3. Récupérer le nombre de bureaux de vote via les lieux de vote
-    const lieuxVoteCodes = await this.prisma.tblLv.findMany({
-      where: {
-        codeCellule: { in: celCodes }
-      },
-      select: {
-        codeDepartement: true,
-        codeSousPrefecture: true,
-        codeCommune: true,
-        codeLieuVote: true
-      }
-    });
-
-    const bureauxCount = await this.prisma.tblBv.count({
-      where: {
-        OR: lieuxVoteCodes.map(lv => ({
-          codeDepartement: lv.codeDepartement,
-          codeSousPrefecture: lv.codeSousPrefecture,
-          codeCommune: lv.codeCommune,
-          codeLieuVote: lv.codeLieuVote
-        }))
-      }
-    });
+    // 3. Récupérer le nombre de bureaux de vote via une requête SQL directe (évite la limite de 2100 paramètres)
+    const bureauxCountResult = await this.prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*) as count
+      FROM TBL_BV bv
+      INNER JOIN TBL_LV lv ON bv.COD_DEPT = lv.COD_DEPT 
+        AND bv.COD_SP = lv.COD_SP 
+        AND bv.COD_COM = lv.COD_COM 
+        AND bv.COD_LV = lv.COD_LV
+      WHERE lv.COD_CEL IN (${celCodes.join(',')})
+    `;
+    
+    const bureauxCount = bureauxCountResult[0]?.count || 0;
 
     // 4. Calculer les agrégations nationales
     const nationalMetrics = importData.reduce((acc, data) => {
