@@ -245,6 +245,9 @@ model TblParrain {
   codeParrain String @unique @map("COD_PAR")
   libelleParrain String @map("LIB_PAR")
   sigle String? @map("SIG_PAR")
+  couleur1 String? @map("COULEUR_1") // Couleur principale en format hexadécimal (#RRGGBB)
+  couleur2 String? @map("COULEUR_2") // Couleur secondaire en format hexadécimal (#RRGGBB)
+  couleur3 String? @map("COULEUR_3") // Couleur tertiaire en format hexadécimal (#RRGGBB)
   
   // Relations
   candidats TblCandidat[]

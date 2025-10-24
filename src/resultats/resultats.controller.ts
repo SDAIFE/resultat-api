@@ -16,6 +16,13 @@ import {
 import { 
   ElectionHeaderResponseDto 
 } from './dto/election-header.dto';
+import { 
+  PublishedZonesResponseDto
+} from './dto/published-zones.dto';
+import { 
+  ResultsByZoneResponseDto,
+  ResultsByZoneQueryDto
+} from './dto/results-by-zone.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -262,6 +269,110 @@ export class ResultatsController {
   }
 
   /**
+   * GET /api/v1/elections/{electionId}/results/candidates-detailed
+   * Récupérer les informations complètes des candidats avec leurs résultats électoraux
+   */
+  @Get(':electionId/results/published-zones')
+  @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
+  @ApiOperation({ 
+    summary: 'Récupérer les zones géographiques avec résultats publiés',
+    description: 'Retourne uniquement les zones géographiques (Région → Département → Lieu de vote → Bureau de vote) dont les résultats électoraux ont été publiés'
+  })
+  @ApiParam({ 
+    name: 'electionId', 
+    description: 'Identifiant de l\'élection', 
+    example: 'election-2025' 
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Zones avec résultats publiés récupérées avec succès',
+    type: PublishedZonesResponseDto
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Paramètres invalides' 
+  })
+  @ApiResponse({ 
+    status: 401, 
+    description: 'Non authentifié' 
+  })
+  @ApiResponse({ 
+    status: 403, 
+    description: 'Accès refusé' 
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Élection non trouvée' 
+  })
+  async getPublishedZones(
+    @Param('electionId') electionId: string
+  ): Promise<PublishedZonesResponseDto> {
+    return this.resultatsService.getPublishedZones(electionId);
+  }
+
+  @Get(':electionId/results/candidates-detailed')
+  @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
+  @ApiOperation({ 
+    summary: 'Récupérer les informations complètes des candidats',
+    description: 'Récupère toutes les informations des candidats avec leurs résultats électoraux pour l\'affichage dans l\'onglet Résultats par candidat'
+  })
+  @ApiParam({ 
+    name: 'electionId', 
+    description: 'Identifiant de l\'élection',
+    example: 'election-2025'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Informations complètes des candidats récupérées avec succès'
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Paramètres invalides' 
+  })
+  @ApiResponse({ 
+    status: 401, 
+    description: 'Non authentifié' 
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Élection non trouvée' 
+  })
+  async getCandidatesDetailed(
+    @Param('electionId') electionId: string
+  ): Promise<any> {
+    try {
+      // Validation de l'electionId
+      if (!electionId || electionId.trim() === '') {
+        throw new HttpException(
+          'L\'identifiant de l\'élection est requis',
+          HttpStatus.BAD_REQUEST
+        );
+      }
+
+      return await this.resultatsService.getCandidatesDetailed(electionId);
+
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      // Gestion des erreurs Prisma
+      if (error.code === 'P2025') {
+        throw new HttpException(
+          `Élection avec l'ID ${electionId} non trouvée`,
+          HttpStatus.NOT_FOUND
+        );
+      }
+
+      // Erreur serveur générique
+      throw new HttpException(
+        'Une erreur interne du serveur s\'est produite',
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
    * GET /api/elections/{electionId}/results/candidates
    * Récupérer uniquement la liste des candidats
    */
@@ -298,5 +409,76 @@ export class ResultatsController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+  }
+
+  /**
+   * GET /api/v1/elections/{electionId}/results/by-zone
+   * Récupérer les résultats électoraux par zone
+   */
+  @Get(':electionId/results/by-zone')
+  @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
+  @ApiOperation({ 
+    summary: 'Récupérer les résultats par zone',
+    description: 'Récupère les résultats électoraux agrégés selon le niveau de zone sélectionné (région, département, lieu de vote, ou bureau de vote)'
+  })
+  @ApiParam({ 
+    name: 'electionId', 
+    description: 'Identifiant de l\'élection',
+    example: 'election-2025'
+  })
+  @ApiQuery({ 
+    name: 'regionId', 
+    description: 'Identifiant de la région (optionnel)',
+    required: false,
+    example: 'lagunes'
+  })
+  @ApiQuery({ 
+    name: 'departmentId', 
+    description: 'Identifiant du département (optionnel)',
+    required: false,
+    example: 'abidjan-1'
+  })
+  @ApiQuery({ 
+    name: 'votingPlaceId', 
+    description: 'Identifiant du lieu de vote (optionnel)',
+    required: false,
+    example: 'lycee-technique'
+  })
+  @ApiQuery({ 
+    name: 'pollingStationId', 
+    description: 'Identifiant du bureau de vote (optionnel)',
+    required: false,
+    example: 'bureau-001'
+  })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Résultats récupérés avec succès',
+    type: ResultsByZoneResponseDto
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Paramètres manquants ou invalides' 
+  })
+  @ApiResponse({ 
+    status: 401, 
+    description: 'Token invalide/expiré' 
+  })
+  @ApiResponse({ 
+    status: 403, 
+    description: 'Accès refusé' 
+  })
+  @ApiResponse({ 
+    status: 404, 
+    description: 'Zone non trouvée ou sans résultats publiés' 
+  })
+  @ApiResponse({ 
+    status: 500, 
+    description: 'Erreur serveur' 
+  })
+  async getResultsByZone(
+    @Param('electionId') electionId: string,
+    @Query(new ValidationPipe({ transform: true })) query: ResultsByZoneQueryDto
+  ): Promise<ResultsByZoneResponseDto> {
+    return this.resultatsService.getResultsByZone(electionId, query);
   }
 }

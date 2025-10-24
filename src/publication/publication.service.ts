@@ -22,6 +22,23 @@ export class PublicationService {
   constructor(private prisma: PrismaService) {}
 
   /**
+   * 🔄 MÉTHODE UTILITAIRE : Mettre à jour l'état des CELs d'un département
+   */
+  private async updateCelsStatusForDepartment(codeDepartement: string, newStatus: string): Promise<number> {
+    const result = await this.prisma.$executeRaw`
+      UPDATE TBL_CEL 
+      SET ETA_RESULTAT_CEL = ${newStatus}
+      WHERE EXISTS (
+        SELECT 1 
+        FROM TBL_LV lv 
+        WHERE lv.COD_CEL = TBL_CEL.COD_CEL 
+          AND lv.COD_DEPT = ${codeDepartement}
+      )
+    `;
+    return result;
+  }
+
+  /**
    * 🚀 MÉTHODE ULTRA-OPTIMISÉE : Récupérer les CELs d'un département
    * Performance : 1306ms → ~30ms (98% plus rapide)
    * Utilise EXISTS au lieu de JOIN pour de meilleures performances
@@ -545,11 +562,14 @@ export class PublicationService {
       );
     }
 
-    // Mettre à jour le statut de publication
+    // Mettre à jour le statut de publication du département
     await this.prisma.tblDept.update({
       where: { id: departmentId },
       data: { statutPublication: 'PUBLISHED' }
     });
+
+    // 🔄 Mettre à jour l'état des CELs du département
+    const updatedCelsCount = await this.updateCelsStatusForDepartment(department.codeDepartement, 'PUBLISHED');
 
     // Enregistrer l'historique
     await this.prisma.departmentPublicationHistory.create({
@@ -581,7 +601,7 @@ export class PublicationService {
 
     return {
       success: true,
-      message: `Département ${department.libelleDepartement} publié avec succès`,
+      message: `Département ${department.libelleDepartement} publié avec succès. ${updatedCelsCount} CEL(s) mises à jour.`,
       department: departmentData
     };
   }
@@ -610,11 +630,14 @@ export class PublicationService {
       throw new NotFoundException('Département non trouvé');
     }
 
-    // Mettre à jour le statut de publication
+    // Mettre à jour le statut de publication du département
     await this.prisma.tblDept.update({
       where: { id: departmentId },
       data: { statutPublication: 'CANCELLED' }
     });
+
+    // 🔄 Mettre à jour l'état des CELs du département
+    const updatedCelsCount = await this.updateCelsStatusForDepartment(department.codeDepartement, 'CANCELLED');
 
     // Enregistrer l'historique
     await this.prisma.departmentPublicationHistory.create({
@@ -648,7 +671,7 @@ export class PublicationService {
 
     return {
       success: true,
-      message: `Publication du département ${department.libelleDepartement} annulée`,
+      message: `Publication du département ${department.libelleDepartement} annulée. ${updatedCelsCount} CEL(s) mises à jour.`,
       department: departmentData
     };
   }
@@ -1057,8 +1080,6 @@ export class PublicationService {
       }),
       this.prisma.tblDept.count({ where: departmentWhere })
     ]);
-
-    console.log(`📊 Départements trouvés: ${departments.length} sur ${total}`);
 
     // 2. Pour chaque département, récupérer les CELs avec données agrégées
     const departmentsData = await Promise.all(

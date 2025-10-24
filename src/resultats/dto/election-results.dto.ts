@@ -14,8 +14,17 @@ export class PartyDto {
   @IsString()
   logo: string;
 
+  @IsArray()
+  @IsString({ each: true })
+  colors: string[];
+
   @IsString()
-  color: string;
+  primaryColor: string;
+
+  // Propriété legacy pour compatibilité
+  @IsString()
+  @IsOptional()
+  color?: string;
 }
 
 export class CandidateDto {

@@ -23,6 +23,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "ts-node prisma/seed.ts",
     "db:reset": "prisma migrate reset --force && npm run db:seed",
+    "reset-db": "ts-node scripts/reset-database.ts",
     "analyze:excel": "ts-node scripts/analyze-excel.ts",
     "analyze:marcory": "ts-node scripts/analyze-marcory-excel.ts",
     "import:carto": "ts-node scripts/import-carto.ts",
