@@ -1,6 +1,6 @@
 import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
 import { Response } from 'express';
-import { AuthError } from '../auth/types/auth-error.types';
+import { AuthError } from '../../auth/types/auth-error.types';
 
 @Catch()
 export class AuthExceptionFilter implements ExceptionFilter {
@@ -11,11 +11,11 @@ export class AuthExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'Erreur interne du serveur';
     let error = 'Internal Server Error';
-    let detail = null;
+    let detail: any = null;
 
     if (exception instanceof AuthError) {
       // Erreur d'authentification personnalisée
-      const authError = exception.toResponse();
+      const authError = (exception as AuthError).toResponse();
       status = authError.statusCode;
       message = authError.message;
       error = authError.error;
@@ -40,14 +40,17 @@ export class AuthExceptionFilter implements ExceptionFilter {
       error = 'Error';
     }
 
-    const errorResponse = {
+    const errorResponse: any = {
       statusCode: status,
       message,
       error,
-      ...(detail && { detail }),
       timestamp: new Date().toISOString(),
       path: ctx.getRequest().url,
     };
+
+    if (detail) {
+      errorResponse.detail = detail;
+    }
 
     response.status(status).json(errorResponse);
   }
