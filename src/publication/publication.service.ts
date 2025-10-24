@@ -1352,21 +1352,21 @@ export class PublicationService {
           
           // Calculer les totaux pour cette CEL
           const aggregated = celData.reduce((acc, data) => {
-            acc.populationHommes += this.parseNumber(data.populationHommes);
-            acc.populationFemmes += this.parseNumber(data.populationFemmes);
-            acc.populationTotale += this.parseNumber(data.populationTotale);
-            acc.personnesAstreintes += this.parseNumber(data.personnesAstreintes);
-            acc.votantsHommes += this.parseNumber(data.votantsHommes);
-            acc.votantsFemmes += this.parseNumber(data.votantsFemmes);
-            acc.totalVotants += this.parseNumber(data.totalVotants);
-            acc.bulletinsNuls += this.parseNumber(data.bulletinsNuls);
-            acc.suffrageExprime += this.parseNumber(data.suffrageExprime);
-            acc.bulletinsBlancs += this.parseNumber(data.bulletinsBlancs);
-            acc.score1 += this.parseNumber(data.score1);
-            acc.score2 += this.parseNumber(data.score2);
-            acc.score3 += this.parseNumber(data.score3);
-            acc.score4 += this.parseNumber(data.score4);
-            acc.score5 += this.parseNumber(data.score5);
+            acc.populationHommes += this.parseNumber(data.populationHommes) || 0;
+            acc.populationFemmes += this.parseNumber(data.populationFemmes) || 0;
+            acc.populationTotale += this.parseNumber(data.populationTotale) || 0;
+            acc.personnesAstreintes += this.parseNumber(data.personnesAstreintes) || 0;
+            acc.votantsHommes += this.parseNumber(data.votantsHommes) || 0;
+            acc.votantsFemmes += this.parseNumber(data.votantsFemmes) || 0;
+            acc.totalVotants += this.parseNumber(data.totalVotants) || 0;
+            acc.bulletinsNuls += this.parseNumber(data.bulletinsNuls) || 0;
+            acc.suffrageExprime += this.parseNumber(data.suffrageExprime) || 0;
+            acc.bulletinsBlancs += this.parseNumber(data.bulletinsBlancs) || 0;
+            acc.score1 += this.parseNumber(data.score1) || 0;
+            acc.score2 += this.parseNumber(data.score2) || 0;
+            acc.score3 += this.parseNumber(data.score3) || 0;
+            acc.score4 += this.parseNumber(data.score4) || 0;
+            acc.score5 += this.parseNumber(data.score5) || 0;
             
             // Calculer le taux de participation moyen
             const tauxParticipation = this.parsePercentage(data.tauxParticipation);
