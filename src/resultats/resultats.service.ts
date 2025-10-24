@@ -1277,6 +1277,7 @@ export class ResultatsService {
   }
 
   private async getPublishedDepartements(): Promise<string[]> {
+    // Récupérer les départements publiés
     const departementsPublies = await this.prisma.tblDept.findMany({
       where: {
         OR: [
@@ -1288,6 +1289,22 @@ export class ResultatsService {
       }
     });
 
-    return departementsPublies.map(dept => dept.libelleDepartement);
+    // Récupérer les communes d'Abidjan publiées
+    const communesAbidjanPubliees = await this.prisma.tblCom.findMany({
+      where: {
+        OR: [
+          { statutPublication: 'PUBLISHED' }
+        ]
+      },
+      select: {
+        libelleCommune: true
+      }
+    });
+
+    // Combiner les départements et communes publiés
+    const departementsList = departementsPublies.map(dept => dept.libelleDepartement);
+    const communesList = communesAbidjanPubliees.map(commune => commune.libelleCommune);
+
+    return [...departementsList, ...communesList];
   }
 }
