@@ -185,8 +185,23 @@ export class UploadService {
 
       console.log(`📦 Fichier de consolidation stocké: ${filePath}`);
 
-      // TODO: Enregistrer dans la base de données si nécessaire
-      // await this.prisma.tblConsolidation.create({ ... });
+      // Enregistrer le chemin du fichier dans la base de données
+      // La référence correspond au code du département
+      const updatedDept = await this.prisma.tblDept.update({
+        where: {
+          codeDepartement: reference,
+        },
+        data: {
+          cheminFichierConsolidation: filePath,
+        },
+        select: {
+          codeDepartement: true,
+          libelleDepartement: true,
+          cheminFichierConsolidation: true,
+        },
+      });
+
+      console.log(`✅ Chemin de consolidation enregistré pour le département ${reference}: ${filePath}`);
 
       return {
         success: true,
@@ -195,9 +210,57 @@ export class UploadService {
         fileSize: file.size,
         reference,
         type,
-        message: 'Fichier de consolidation uploadé avec succès',
+        departement: updatedDept,
+        message: 'Fichier de consolidation uploadé et enregistré avec succès',
       };
     } catch (error) {
+      console.error('❌ Erreur lors du traitement du fichier de consolidation:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Récupère les informations du fichier de consolidation d'un département
+   */
+  async getConsolidationFile(codeDepartement: string) {
+    try {
+      const departement = await this.prisma.tblDept.findUnique({
+        where: {
+          codeDepartement,
+        },
+        select: {
+          codeDepartement: true,
+          libelleDepartement: true,
+          cheminFichierConsolidation: true,
+        },
+      });
+
+      if (!departement) {
+        throw new Error(`Département ${codeDepartement} non trouvé`);
+      }
+
+      if (!departement.cheminFichierConsolidation) {
+        return {
+          success: false,
+          message: 'Aucun fichier de consolidation trouvé pour ce département',
+          departement: {
+            codeDepartement: departement.codeDepartement,
+            libelleDepartement: departement.libelleDepartement,
+          },
+        };
+      }
+
+      return {
+        success: true,
+        departement: {
+          codeDepartement: departement.codeDepartement,
+          libelleDepartement: departement.libelleDepartement,
+          cheminFichierConsolidation: departement.cheminFichierConsolidation,
+        },
+        message: 'Fichier de consolidation trouvé',
+      };
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération du fichier de consolidation:', error);
       throw error;
     }
   }

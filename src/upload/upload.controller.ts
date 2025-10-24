@@ -282,9 +282,10 @@ export class UploadController {
    * - Types autorisés : Excel, PDF, CSV
    * - Taille max : 10MB
    * - Stockage structuré par date
+   * - Enregistrement du chemin dans la base de données
    */
   @Post('consolidation')
-  @Roles('SADMIN', 'ADMIN')
+  @Roles('SADMIN', 'ADMIN','USER')
   @UseInterceptors(
     FileInterceptor('file', {
       storage: undefined,
@@ -293,15 +294,16 @@ export class UploadController {
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
           'application/vnd.ms-excel', // .xls
           'application/pdf',
-          'text/csv',
-          'application/csv',
+          'image/jpeg',
+          'image/jpg',
+          'image/png',
         ];
         
         if (allowedMimes.includes(file.mimetype)) {
           callback(null, true);
         } else {
           callback(
-            new Error('Type de fichier non autorisé. Formats acceptés : Excel, PDF, CSV'),
+            new Error('Type de fichier non autorisé. Formats acceptés : PDF, JPG, PNG'),
             false
           );
         }
@@ -333,6 +335,23 @@ export class UploadController {
         user.id
       );
 
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Récupérer le fichier de consolidation d'un département
+   */
+  @Get('consolidation/:codeDepartement')
+  @Roles('SADMIN', 'ADMIN', 'USER')
+  async getConsolidationFile(
+    @Param('codeDepartement') codeDepartement: string,
+    @CurrentUser() user: any,
+  ) {
+    try {
+      const result = await this.uploadService.getConsolidationFile(codeDepartement);
       return result;
     } catch (error) {
       throw error;

@@ -106,6 +106,7 @@ model TblDept {
   numeroUtilisateur String? @map("NUM_UTIL")
   statutPublication String? @map("STAT_PUB")
   libelleDepartement String @map("LIB_DEPT")
+  cheminFichierConsolidation String? @map("CHEMIN_FICHIER_CONSOLIDATION") // Chemin du fichier de consolidation
   
   // Relations
   region TblReg @relation(fields: [codeRegion], references: [codeRegion])
