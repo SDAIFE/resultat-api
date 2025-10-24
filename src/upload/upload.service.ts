@@ -906,7 +906,7 @@ export class UploadService {
     // Construire la condition WHERE selon le rôle
     const where: any = {
       etatResultatCellule: {
-        in: ['I', 'P'] // Seulement les CELs importées ou publiées
+        in: ['I', 'PUBLISHED'] // Seulement les CELs importées ou publiées
       }
     };
 

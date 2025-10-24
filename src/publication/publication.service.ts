@@ -319,7 +319,7 @@ export class PublicationService {
     const importedCels = await this.prisma.tblCel.count({
       where: { 
         ...celWhere,
-        etatResultatCellule: { in: ['I', 'P'] } 
+        etatResultatCellule: { in: ['I', 'P', 'PUBLISHED'] } 
       }
     });
     
@@ -417,7 +417,7 @@ export class PublicationService {
         const celsRaw = await this.getCelsForDepartment(dept.codeDepartement);
 
         const totalCels = celsRaw.length;
-        const importedCels = celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P'].includes(cel.ETA_RESULTAT_CEL)).length;
+        const importedCels = celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P', 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL)).length;
         const pendingCels = celsRaw.filter(cel => !cel.ETA_RESULTAT_CEL || cel.ETA_RESULTAT_CEL === 'N').length;
 
         return {
@@ -434,7 +434,7 @@ export class PublicationService {
           cels: celsRaw.map(cel => ({
             codeCellule: cel.COD_CEL,
             libelleCellule: cel.LIB_CEL,
-            statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+            statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
             dateImport: new Date().toISOString()
           }))
         };
@@ -479,7 +479,7 @@ export class PublicationService {
             cels: cels.map(cel => ({
               codeCellule: cel.COD_CEL,
               libelleCellule: cel.LIB_CEL,
-              statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+              statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
               dateImport: new Date().toISOString()
             }))
           };
@@ -587,14 +587,14 @@ export class PublicationService {
       codeDepartement: department.codeDepartement,
       libelleDepartement: department.libelleDepartement,
       totalCels: celsRaw.length,
-      importedCels: celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P'].includes(cel.ETA_RESULTAT_CEL)).length,
+      importedCels: celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL)).length,
       pendingCels: 0,
       publicationStatus: 'PUBLISHED',
       lastUpdate: new Date().toISOString(),
       cels: celsRaw.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString()
       }))
     };
@@ -657,14 +657,14 @@ export class PublicationService {
       codeDepartement: department.codeDepartement,
       libelleDepartement: department.libelleDepartement,
       totalCels: celsRaw.length,
-      importedCels: celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P'].includes(cel.ETA_RESULTAT_CEL)).length,
+      importedCels: celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL)).length,
       pendingCels: celsRaw.filter(cel => !cel.ETA_RESULTAT_CEL || cel.ETA_RESULTAT_CEL === 'N').length,
       publicationStatus: 'CANCELLED',
       lastUpdate: new Date().toISOString(),
       cels: celsRaw.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString()
       }))
     };
@@ -730,14 +730,14 @@ export class PublicationService {
       codeDepartement: department.codeDepartement,
       libelleDepartement: department.libelleDepartement,
       totalCels: celsRaw.length,
-      importedCels: celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P'].includes(cel.ETA_RESULTAT_CEL)).length,
+      importedCels: celsRaw.filter(cel => cel.ETA_RESULTAT_CEL && ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL)).length,
       pendingCels: celsRaw.filter(cel => !cel.ETA_RESULTAT_CEL || cel.ETA_RESULTAT_CEL === 'N').length,
       publicationStatus: this.mapPublicationStatus(department.statutPublication),
       lastUpdate: new Date().toISOString(),
       cels: celsRaw.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString()
       }))
     };
@@ -754,7 +754,7 @@ export class PublicationService {
       cels: celsRaw.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString(),
         nombreLignesImportees: 0,
         nombreLignesEnErreur: 0
@@ -779,6 +779,22 @@ export class PublicationService {
         return 'CANCELLED';
       default:
         return 'PENDING';
+    }
+  }
+
+  /**
+   * Mapper le statut des CELs pour la compatibilité avec les DTOs
+   */
+  private mapCelStatus(statut: string): 'N' | 'I' | 'P' {
+    switch (statut) {
+      case 'PUBLISHED':
+        return 'P';
+      case 'I':
+        return 'I';
+      case 'P':
+        return 'P';
+      default:
+        return 'N';
     }
   }
 
@@ -852,14 +868,14 @@ export class PublicationService {
       codeDepartement: '022',
       codeCommune: commune.codeCommune,
       totalCels: cels.length,
-      importedCels: cels.filter(cel => ['I', 'P'].includes(cel.ETA_RESULTAT_CEL || '')).length,
+      importedCels: cels.filter(cel => ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL || '')).length,
       pendingCels: 0,
       publicationStatus: 'PUBLISHED',
       lastUpdate: new Date().toISOString(),
       cels: cels.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString()
       }))
     };
@@ -927,14 +943,14 @@ export class PublicationService {
       codeDepartement: '022',
       codeCommune: commune.codeCommune,
       totalCels: cels.length,
-      importedCels: cels.filter(cel => ['I', 'P'].includes(cel.ETA_RESULTAT_CEL || '')).length,
+      importedCels: cels.filter(cel => ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL || '')).length,
       pendingCels: cels.filter(cel => cel.ETA_RESULTAT_CEL === 'N').length,
       publicationStatus: 'CANCELLED',
       lastUpdate: new Date().toISOString(),
       cels: cels.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString()
       }))
     };
@@ -998,14 +1014,14 @@ export class PublicationService {
       codeDepartement: commune.codeDepartement,
       libelleCommune: commune.libelleCommune,
       totalCels: cels.length,
-      importedCels: cels.filter(cel => ['I', 'P'].includes(cel.ETA_RESULTAT_CEL || '')).length,
+      importedCels: cels.filter(cel => ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL || '')).length,
       pendingCels: cels.filter(cel => cel.ETA_RESULTAT_CEL === 'N').length,
       publicationStatus: this.mapPublicationStatus(commune.statutPublication),
       lastUpdate: new Date().toISOString(),
       cels: cels.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString()
       }))
     };
@@ -1015,7 +1031,7 @@ export class PublicationService {
       cels: cels.map(cel => ({
         codeCellule: cel.COD_CEL,
         libelleCellule: cel.LIB_CEL,
-        statut: (cel.ETA_RESULTAT_CEL || 'N') as 'N' | 'I' | 'P',
+        statut: this.mapCelStatus(cel.ETA_RESULTAT_CEL || 'N'),
         dateImport: new Date().toISOString(),
         nombreLignesImportees: 0,
         nombreLignesEnErreur: 0
@@ -1092,7 +1108,7 @@ export class PublicationService {
         
         // Filtrer seulement les CELs avec statut I ou P
         const celsFiltered = celsRaw.filter(cel => 
-          cel.ETA_RESULTAT_CEL && ['I', 'P'].includes(cel.ETA_RESULTAT_CEL)
+          cel.ETA_RESULTAT_CEL && ['I', 'P' , 'PUBLISHED'].includes(cel.ETA_RESULTAT_CEL)
         );
         console.log(`📊 CELs importées pour ${dept.codeDepartement}: ${celsFiltered.length}`);
 
