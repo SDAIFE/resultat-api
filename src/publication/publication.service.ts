@@ -545,10 +545,44 @@ export class PublicationService {
 
     // Bloquer la publication globale d'Abidjan (022)
     if (department.codeDepartement === '022') {
-      throw new BadRequestException(
-        'Abidjan ne peut pas être publié globalement. ' +
-        'Veuillez publier chaque commune individuellement via les endpoints /communes/:id/publish'
-      );
+      // Vérifier le statut actuel des communes d'Abidjan
+      const communesAbidjan = await this.prisma.tblCom.findMany({
+        where: { codeDepartement: '022' },
+        select: {
+          libelleCommune: true,
+          statutPublication: true
+        }
+      });
+
+      const publishedCommunes = communesAbidjan.filter(c => c.statutPublication === 'PUBLISHED');
+      const totalCommunes = communesAbidjan.length;
+
+      if (publishedCommunes.length === totalCommunes && totalCommunes > 0) {
+        // Toutes les communes sont publiées, publier automatiquement le département
+        await this.updateAbidjanDepartmentStatus(userId);
+        
+        return {
+          success: true,
+          message: `Département d'Abidjan publié automatiquement car toutes les ${totalCommunes} communes sont publiées.`,
+          department: {
+            id: department.id,
+            codeDepartement: department.codeDepartement,
+            libelleDepartement: department.libelleDepartement,
+            totalCels: 0, // Sera calculé si nécessaire
+            importedCels: 0,
+            pendingCels: 0,
+            publicationStatus: 'PUBLISHED',
+            lastUpdate: new Date().toISOString(),
+            cels: []
+          }
+        };
+      } else {
+        throw new BadRequestException(
+          `Abidjan ne peut pas être publié globalement. ` +
+          `${publishedCommunes.length}/${totalCommunes} communes sont publiées. ` +
+          `Veuillez publier chaque commune individuellement via les endpoints /communes/:id/publish`
+        );
+      }
     }
 
     // 🚀 OPTIMISÉ : Vérifier que toutes les CELs sont importées
@@ -843,11 +877,14 @@ export class PublicationService {
       );
     }
 
-    // Mettre à jour le statut de publication
+    // Mettre à jour le statut de publication de la commune
     await this.prisma.tblCom.update({
       where: { id: communeId },
       data: { statutPublication: 'PUBLISHED' }
     });
+
+    // 🔄 Vérifier et mettre à jour le statut du département d'Abidjan si nécessaire
+    await this.updateAbidjanDepartmentStatus(userId);
 
     // Enregistrer l'historique
     await this.prisma.communePublicationHistory.create({
@@ -916,11 +953,14 @@ export class PublicationService {
       throw new BadRequestException('Cette fonctionnalité est réservée aux communes d\'Abidjan');
     }
 
-    // Mettre à jour le statut de publication
+    // Mettre à jour le statut de publication de la commune
     await this.prisma.tblCom.update({
       where: { id: communeId },
       data: { statutPublication: 'CANCELLED' }
     });
+
+    // 🔄 Vérifier et mettre à jour le statut du département d'Abidjan si nécessaire
+    await this.updateAbidjanDepartmentStatus(userId);
 
     // Enregistrer l'historique
     await this.prisma.communePublicationHistory.create({
@@ -1497,6 +1537,110 @@ export class PublicationService {
   // ===========================================
   // MÉTHODES POUR GÉRER ABIDJAN (COMMUNES)
   // ===========================================
+
+  /**
+   * 🔄 MÉTHODE UTILITAIRE : Mettre à jour le statut du département d'Abidjan
+   * Basé sur le statut de publication de toutes ses communes
+   */
+  private async updateAbidjanDepartmentStatus(userId: string): Promise<void> {
+    console.log('🔄 Vérification du statut du département d\'Abidjan...');
+
+    // 1. Récupérer toutes les communes d'Abidjan
+    const communesAbidjan = await this.prisma.tblCom.findMany({
+      where: { codeDepartement: '022' },
+      select: {
+        id: true,
+        libelleCommune: true,
+        statutPublication: true
+      }
+    });
+
+    console.log(`📊 Communes d'Abidjan trouvées: ${communesAbidjan.length}`);
+
+    if (communesAbidjan.length === 0) {
+      console.log('⚠️ Aucune commune d\'Abidjan trouvée');
+      return;
+    }
+
+    // 2. Analyser les statuts de publication
+    const publishedCommunes = communesAbidjan.filter(c => c.statutPublication === 'PUBLISHED');
+    const cancelledCommunes = communesAbidjan.filter(c => c.statutPublication === 'CANCELLED');
+    const pendingCommunes = communesAbidjan.filter(c => !c.statutPublication || c.statutPublication === 'PENDING');
+
+    console.log(`📊 Statuts des communes: ${publishedCommunes.length} publiées, ${cancelledCommunes.length} annulées, ${pendingCommunes.length} en attente`);
+
+    // 3. Déterminer le nouveau statut du département
+    let newDepartmentStatus: string;
+    let action: string;
+    let details: string;
+
+    if (publishedCommunes.length === communesAbidjan.length) {
+      // Toutes les communes sont publiées → département PUBLISHED
+      newDepartmentStatus = 'PUBLISHED';
+      action = 'PUBLISH';
+      details = `Département d'Abidjan publié automatiquement - toutes les ${communesAbidjan.length} communes sont publiées`;
+    } else if (publishedCommunes.length === 0) {
+      // Aucune commune publiée → département CANCELLED
+      newDepartmentStatus = 'CANCELLED';
+      action = 'CANCEL';
+      details = `Département d'Abidjan annulé automatiquement - aucune commune publiée (${cancelledCommunes.length} annulées, ${pendingCommunes.length} en attente)`;
+    } else {
+      // Certaines communes sont publiées mais pas toutes → département reste PUBLISHED si déjà publié, sinon CANCELLED
+      const departementAbidjan = await this.prisma.tblDept.findFirst({
+        where: { codeDepartement: '022' },
+        select: { statutPublication: true }
+      });
+      
+      if (departementAbidjan?.statutPublication === 'PUBLISHED') {
+        // Le département est déjà publié et il reste des communes publiées → garder PUBLISHED
+        newDepartmentStatus = 'PUBLISHED';
+        action = 'MAINTAIN';
+        details = `Département d'Abidjan maintenu publié - ${publishedCommunes.length}/${communesAbidjan.length} communes publiées`;
+      } else {
+        // Le département n'est pas publié et certaines communes le sont → CANCELLED
+        newDepartmentStatus = 'CANCELLED';
+        action = 'CANCEL';
+        details = `Département d'Abidjan annulé - ${publishedCommunes.length}/${communesAbidjan.length} communes publiées (insuffisant pour publication complète)`;
+      }
+    }
+
+    // 4. Récupérer le département d'Abidjan
+    const departementAbidjan = await this.prisma.tblDept.findFirst({
+      where: { codeDepartement: '022' },
+      select: { id: true, libelleDepartement: true, statutPublication: true }
+    });
+
+    if (!departementAbidjan) {
+      console.error('❌ Département d\'Abidjan (022) non trouvé');
+      return;
+    }
+
+    // 5. Vérifier si le statut doit être changé
+    if (departementAbidjan.statutPublication === newDepartmentStatus) {
+      console.log(`✅ Statut du département d'Abidjan déjà à jour: ${newDepartmentStatus}`);
+      return;
+    }
+
+    // 6. Mettre à jour le statut du département
+    await this.prisma.tblDept.update({
+      where: { id: departementAbidjan.id },
+      data: { statutPublication: newDepartmentStatus }
+    });
+
+    // 7. Enregistrer l'historique (seulement pour les vraies actions, pas pour MAINTAIN)
+    if (action !== 'MAINTAIN') {
+      await this.prisma.departmentPublicationHistory.create({
+        data: {
+          departmentId: departementAbidjan.id,
+          action: action as 'PUBLISH' | 'CANCEL' | 'IMPORT',
+          userId,
+          details
+        }
+      });
+    }
+
+    console.log(`✅ Département d'Abidjan mis à jour: ${departementAbidjan.statutPublication} → ${newDepartmentStatus}`);
+  }
 
   /**
    * Récupérer les 14 communes distinctes d'Abidjan

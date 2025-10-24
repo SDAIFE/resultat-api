@@ -770,42 +770,128 @@ export class ResultatsService {
   }
 
   async getElectionResults(electionId: string, query: ElectionResultsQueryDto = {}): Promise<ElectionResultsResponseDto> {
-    // Implémentation simplifiée
-    return {
-      success: true,
-      data: {
-        id: electionId,
-        nom: 'Élection Présidentielle 2025 - Premier Tour',
-        date: '2025-10-25T00:00:00Z',
-        type: 'presidential',
-        tour: 1,
-        status: 'preliminaires',
-        lastUpdate: new Date().toISOString(),
-        candidates: [],
-        totals: {
-          inscrits: 0,
-          inscritsHommes: 0,
-          inscritsFemmes: 0,
-          votants: 0,
-          votantsHommes: 0,
-          votantsFemmes: 0,
-          exprimes: 0,
-          blancs: 0,
-          nuls: 0,
-          tauxParticipation: 0,
-          results: []
+    try {
+      // Vérification du cache
+      const cacheKey = `election_results:${electionId}:${JSON.stringify(query)}`;
+      const cachedResult = this.cacheService.get(cacheKey);
+      if (cachedResult) {
+        return cachedResult;
+      }
+
+      // Récupérer les départements publiés
+      const departementsPublies = await this.getPublishedDepartements();
+      
+      // Récupérer les candidats
+      const candidats = await this.prisma.tblCandidat.findMany({
+        include: {
+          parrain: true
         },
-        statistics: {
-          bureauTraites: 0,
-          bureauTotal: 0,
-          pourcentageTraite: 0,
-          tendances: []
+        orderBy: {
+          numeroOrdre: 'asc'
+        }
+      });
+
+      // Calculer les résultats des candidats (uniquement pour les départements publiés)
+      const candidateResults = await this.calculateCandidateResults();
+      const totalExprimes = await this.getTotalExprimes();
+
+      // Construire les données des candidats avec leurs résultats
+      const candidates: CandidateDto[] = candidats.map(candidat => {
+        const candidateResult = candidateResults.find(r => r.candidateId === candidat.numeroOrdre.toString());
+        const votes = candidateResult?.votes || 0;
+        const percentage = candidateResult?.percentage || 0;
+
+        return {
+          id: candidat.id,
+          firstName: candidat.prenomCandidat,
+          lastName: candidat.nomCandidat,
+          fullName: `${candidat.prenomCandidat} ${candidat.nomCandidat}`,
+          numero: parseInt(candidat.numeroOrdre),
+          photo: candidat.cheminPhoto || '/images/candidates/default.jpg',
+          party: {
+            id: candidat.parrain?.id || 'independant',
+            name: candidat.parrain?.libelleParrain || 'Indépendant',
+            sigle: candidat.parrain?.libelleParrain || 'IND',
+            logo: candidat.cheminSymbole || '/images/parties/default.jpg',
+            colors: this.getPartyColors(
+              candidat.parrain?.codeParrain || 'independant',
+              candidat.parrain?.couleur1,
+              candidat.parrain?.couleur2,
+              candidat.parrain?.couleur3
+            ),
+            primaryColor: this.getPartyColors(
+              candidat.parrain?.codeParrain || 'independant',
+              candidat.parrain?.couleur1,
+              candidat.parrain?.couleur2,
+              candidat.parrain?.couleur3
+            )[0]
+          },
+          isWinner: false, // Sera calculé après tri
+          isTied: false // Sera calculé après tri
+        };
+      });
+
+      // Trier par nombre de voix et marquer le gagnant
+      candidates.sort((a, b) => {
+        const aResult = candidateResults.find(r => r.candidateId === a.numero.toString());
+        const bResult = candidateResults.find(r => r.candidateId === b.numero.toString());
+        const aVotes = aResult?.votes || 0;
+        const bVotes = bResult?.votes || 0;
+        return bVotes - aVotes;
+      });
+      
+      if (candidates.length > 0) {
+        candidates[0].isWinner = true;
+        // Vérifier s'il y a égalité avec le deuxième
+        if (candidates.length > 1) {
+          const firstResult = candidateResults.find(r => r.candidateId === candidates[0].numero.toString());
+          const secondResult = candidateResults.find(r => r.candidateId === candidates[1].numero.toString());
+          const firstVotes = firstResult?.votes || 0;
+          const secondVotes = secondResult?.votes || 0;
+          if (firstVotes === secondVotes) {
+            candidates[0].isTied = true;
+            candidates[1].isTied = true;
+          }
+        }
+      }
+
+      // Calculer les totaux (uniquement pour les départements publiés)
+      const totals = await this.calculateNationalTotals();
+
+      // Calculer les statistiques
+      const statistics = await this.calculateStatistics();
+
+      // Récupérer les régions avec départements publiés
+      const regions = await this.getRegionsWithPublishedDepartments();
+
+      const result: ElectionResultsResponseDto = {
+        success: true,
+        data: {
+          id: electionId,
+          nom: 'Élection Présidentielle 2025 - Premier Tour',
+          date: '2025-10-25T00:00:00Z',
+          type: 'presidential',
+          tour: 1,
+          status: 'preliminaires',
+          lastUpdate: new Date().toISOString(),
+          candidates,
+          totals,
+          statistics,
+          regions,
+          departementsPublies
         },
-        regions: [],
-        departementsPublies: []
-      },
-      message: 'Résultats électoraux récupérés avec succès'
-    };
+        message: 'Résultats électoraux récupérés avec succès'
+      };
+
+      // Mettre en cache
+      this.cacheService.set(cacheKey, result, 300); // 5 minutes
+
+      return result;
+
+    } catch (error) {
+      console.error('Erreur lors de la récupération des résultats électoraux:', error);
+      throw error;
+    }
   }
 
   async getPublishedZones(electionId: string): Promise<PublishedZonesResponseDto> {
@@ -1157,7 +1243,7 @@ export class ResultatsService {
         INNER JOIN TBL_LV lv ON lv.COD_CEL = c.COD_CEL
         INNER JOIN TBL_DEPT d ON d.COD_DEPT = lv.COD_DEPT
         WHERE c.COD_CEL = iec.COD_CEL
-          AND d.STAT_PUB IN ('PUBLISHED')
+          AND d.STAT_PUB IN ('PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS')
       )
     `;
 
@@ -1238,7 +1324,14 @@ export class ResultatsService {
       where: {
         departement: {
           OR: [
+            { statutPublication: 'PUBLIE' },
+            { statutPublication: 'PUBLIÉ' },
             { statutPublication: 'PUBLISHED' },
+            { statutPublication: 'ACTIF' },
+            { statutPublication: 'ACTIVE' },
+            { statutPublication: 'EN_COURS' },
+            { statutPublication: 'EN COURS' },
+            { statutPublication: 'IN_PROGRESS' }
           ]
         }
       },
@@ -1271,8 +1364,11 @@ export class ResultatsService {
       votants,
       votantsHommes,
       votantsFemmes,
+      exprimes: suffrageExprime,
+      blancs: bulletinsBlancs,
+      nuls: bulletinsNuls,
       tauxParticipation,
-      suffrageExprime
+      results: [] // Les résultats par candidat peuvent être ajoutés si nécessaire
     };
   }
 
@@ -1281,7 +1377,14 @@ export class ResultatsService {
     const departementsPublies = await this.prisma.tblDept.findMany({
       where: {
         OR: [
-          { statutPublication: 'PUBLISHED' }
+          { statutPublication: 'PUBLIE' },
+          { statutPublication: 'PUBLIÉ' },
+          { statutPublication: 'PUBLISHED' },
+          { statutPublication: 'ACTIF' },
+          { statutPublication: 'ACTIVE' },
+          { statutPublication: 'EN_COURS' },
+          { statutPublication: 'EN COURS' },
+          { statutPublication: 'IN_PROGRESS' }
         ]
       },
       select: {
@@ -1293,7 +1396,14 @@ export class ResultatsService {
     const communesAbidjanPubliees = await this.prisma.tblCom.findMany({
       where: {
         OR: [
-          { statutPublication: 'PUBLISHED' }
+          { statutPublication: 'PUBLIE' },
+          { statutPublication: 'PUBLIÉ' },
+          { statutPublication: 'PUBLISHED' },
+          { statutPublication: 'ACTIF' },
+          { statutPublication: 'ACTIVE' },
+          { statutPublication: 'EN_COURS' },
+          { statutPublication: 'EN COURS' },
+          { statutPublication: 'IN_PROGRESS' }
         ]
       },
       select: {
@@ -1306,5 +1416,221 @@ export class ResultatsService {
     const communesList = communesAbidjanPubliees.map(commune => commune.libelleCommune);
 
     return [...departementsList, ...communesList];
+  }
+
+  /**
+   * Calculer les statistiques générales (uniquement pour les départements publiés)
+   */
+  private async calculateStatistics(): Promise<StatisticsDto> {
+    // Récupérer le nombre total de bureaux de vote
+    const totalBureaux = await this.prisma.tblBv.count({
+      where: {
+        departement: {
+          OR: [
+            { statutPublication: 'PUBLIE' },
+            { statutPublication: 'PUBLIÉ' },
+            { statutPublication: 'PUBLISHED' },
+            { statutPublication: 'ACTIF' },
+            { statutPublication: 'ACTIVE' },
+            { statutPublication: 'EN_COURS' },
+            { statutPublication: 'EN COURS' },
+            { statutPublication: 'IN_PROGRESS' }
+          ]
+        }
+      }
+    });
+
+    // Récupérer le nombre de bureaux traités (avec résultats)
+    const bureauxTraites = await this.prisma.tblBv.count({
+      where: {
+        departement: {
+          OR: [
+            { statutPublication: 'PUBLIE' },
+            { statutPublication: 'PUBLIÉ' },
+            { statutPublication: 'PUBLISHED' },
+            { statutPublication: 'ACTIF' },
+            { statutPublication: 'ACTIVE' },
+            { statutPublication: 'EN_COURS' },
+            { statutPublication: 'EN COURS' },
+            { statutPublication: 'IN_PROGRESS' }
+          ]
+        },
+        totalVotants: {
+          gt: 0
+        }
+      }
+    });
+
+    const pourcentageTraite = totalBureaux > 0 
+      ? Number(((bureauxTraites / totalBureaux) * 100).toFixed(2))
+      : 0;
+
+    return {
+      bureauTraites: bureauxTraites,
+      bureauTotal: totalBureaux,
+      pourcentageTraite,
+      tendances: [] // Les tendances peuvent être calculées séparément si nécessaire
+    };
+  }
+
+  /**
+   * Récupérer les régions avec leurs départements publiés
+   */
+  private async getRegionsWithPublishedDepartments(): Promise<RegionDto[]> {
+    const regions = await this.prisma.tblReg.findMany({
+      include: {
+        departements: {
+          where: {
+            OR: [
+              { statutPublication: 'PUBLIE' },
+              { statutPublication: 'PUBLIÉ' },
+              { statutPublication: 'PUBLISHED' },
+              { statutPublication: 'ACTIF' },
+              { statutPublication: 'ACTIVE' },
+              { statutPublication: 'EN_COURS' },
+              { statutPublication: 'EN COURS' },
+              { statutPublication: 'IN_PROGRESS' }
+            ]
+          },
+          include: {
+            lieuxVote: {
+              include: {
+                bureauxVote: true
+              }
+            }
+          },
+          orderBy: {
+            libelleDepartement: 'asc'
+          }
+        }
+      },
+      orderBy: {
+        libelleRegion: 'asc'
+      }
+    });
+
+    return regions.map(region => {
+      // Calculer les totaux de la région
+      let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0;
+      
+      region.departements.forEach(dept => {
+        dept.lieuxVote.forEach(lv => {
+          lv.bureauxVote.forEach(bv => {
+            totalInscrits += bv.inscrits || 0;
+            totalVotants += bv.totalVotants || 0;
+            totalBlancs += bv.bulletinsBlancs || 0;
+            totalNuls += bv.bulletinsNuls || 0;
+          });
+        });
+      });
+
+      const suffrageExprime = totalVotants - totalBlancs - totalNuls;
+      const tauxParticipation = totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0;
+
+      return {
+        id: region.id,
+        nom: region.libelleRegion,
+        departements: region.departements.map(dept => {
+          // Calculer les totaux du département
+          let deptInscrits = 0, deptVotants = 0, deptBlancs = 0, deptNuls = 0;
+          
+          dept.lieuxVote.forEach(lv => {
+            lv.bureauxVote.forEach(bv => {
+              deptInscrits += bv.inscrits || 0;
+              deptVotants += bv.totalVotants || 0;
+              deptBlancs += bv.bulletinsBlancs || 0;
+              deptNuls += bv.bulletinsNuls || 0;
+            });
+          });
+
+          const deptSuffrageExprime = deptVotants - deptBlancs - deptNuls;
+          const deptTauxParticipation = deptInscrits > 0 ? Number(((deptVotants / deptInscrits) * 100).toFixed(2)) : 0;
+
+          return {
+            id: dept.id,
+            code: dept.id, // Utiliser l'ID comme code
+            nom: dept.libelleDepartement,
+            regionId: region.id,
+            totals: {
+              inscrits: deptInscrits,
+              inscritsHommes: 0, // Non disponible dans le schéma actuel
+              inscritsFemmes: 0, // Non disponible dans le schéma actuel
+              votants: deptVotants,
+              votantsHommes: 0, // Non disponible dans le schéma actuel
+              votantsFemmes: 0, // Non disponible dans le schéma actuel
+              exprimes: deptSuffrageExprime,
+              blancs: deptBlancs,
+              nuls: deptNuls,
+              tauxParticipation: deptTauxParticipation,
+              results: [] // Les résultats par candidat peuvent être ajoutés si nécessaire
+            },
+            lieuxVote: dept.lieuxVote.map(lv => {
+              // Calculer les totaux du lieu de vote
+              let lvInscrits = 0, lvVotants = 0, lvBlancs = 0, lvNuls = 0;
+              
+              lv.bureauxVote.forEach(bv => {
+                lvInscrits += bv.inscrits || 0;
+                lvVotants += bv.totalVotants || 0;
+                lvBlancs += bv.bulletinsBlancs || 0;
+                lvNuls += bv.bulletinsNuls || 0;
+              });
+
+              const lvSuffrageExprime = lvVotants - lvBlancs - lvNuls;
+              const lvTauxParticipation = lvInscrits > 0 ? Number(((lvVotants / lvInscrits) * 100).toFixed(2)) : 0;
+
+              return {
+                id: lv.id,
+                nom: lv.libelleLieuVote,
+                adresse: '', // Non disponible dans le schéma actuel
+                departementId: dept.id,
+                totals: {
+                  inscrits: lvInscrits,
+                  inscritsHommes: 0,
+                  inscritsFemmes: 0,
+                  votants: lvVotants,
+                  votantsHommes: 0,
+                  votantsFemmes: 0,
+                  exprimes: lvSuffrageExprime,
+                  blancs: lvBlancs,
+                  nuls: lvNuls,
+                  tauxParticipation: lvTauxParticipation,
+                  results: []
+                },
+                bureaux: lv.bureauxVote.map(bv => ({
+                  id: bv.id,
+                  numero: bv.numeroBureauVote,
+                  nom: bv.numeroBureauVote, // Utiliser le numéro comme nom
+                  lieuVoteId: lv.id,
+                  inscrits: bv.inscrits || 0,
+                  inscritsHommes: 0,
+                  inscritsFemmes: 0,
+                  votants: bv.totalVotants || 0,
+                  votantsHommes: 0,
+                  votantsFemmes: 0,
+                  exprimes: (bv.totalVotants || 0) - (bv.bulletinsBlancs || 0) - (bv.bulletinsNuls || 0),
+                  blancs: bv.bulletinsBlancs || 0,
+                  nuls: bv.bulletinsNuls || 0,
+                  tauxParticipation: (bv.inscrits || 0) > 0 ? Number((((bv.totalVotants || 0) / (bv.inscrits || 1)) * 100).toFixed(2)) : 0,
+                  results: []
+                }))
+              };
+            })
+          };
+        }),
+        totals: {
+          inscrits: totalInscrits,
+          inscritsHommes: 0,
+          inscritsFemmes: 0,
+          votants: totalVotants,
+          votantsHommes: 0,
+          votantsFemmes: 0,
+          exprimes: suffrageExprime,
+          blancs: totalBlancs,
+          nuls: totalNuls,
+          tauxParticipation,
+          results: []
+        }
+      };
+    });
   }
 }
