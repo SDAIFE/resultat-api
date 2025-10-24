@@ -78,7 +78,7 @@ export class AuthController {
   @Post('refresh')
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 tentatives par minute
   @HttpCode(HttpStatus.OK)
-  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto): Promise<{ accessToken: string }> {
+  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto): Promise<AuthResponseDto> {
     if (!refreshTokenDto?.refreshToken) {
       throw new Error('Refresh token manquant dans le corps de la requête');
     }

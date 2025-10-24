@@ -1,10 +1,14 @@
 import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service';
 import { CacheService } from '../common/services/cache.service';
+import { SessionService } from '../common/services/session.service';
+import { GracePeriodService } from '../common/services/grace-period.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
+import { AuthErrorFactory } from './types/auth-error.types';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 
@@ -14,6 +18,9 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private cacheService: CacheService,
+    private configService: ConfigService,
+    private sessionService: SessionService,
+    private gracePeriodService: GracePeriodService,
   ) {}
 
   /**
@@ -36,13 +43,13 @@ export class AuthService {
     });
 
     if (!user || !user.isActive) {
-      throw new UnauthorizedException('Identifiants invalides');
+      throw AuthErrorFactory.invalidCredentials();
     }
 
     // Vérifier le mot de passe
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      throw new UnauthorizedException('Identifiants invalides');
+      throw AuthErrorFactory.invalidCredentials();
     }
 
     // Récupérer les CELs basées sur les départements attribués
@@ -180,9 +187,15 @@ export class AuthService {
   }
 
   /**
-   * Rafraîchir le token d'accès
+   * Rafraîchir le token d'accès avec rotation du refresh token
    */
-  async refreshToken(refreshToken: string): Promise<{ accessToken: string }> {
+  async refreshToken(refreshToken: string): Promise<AuthResponseDto> {
+    // Vérifier si la session est active (sliding sessions)
+    const isActive = await this.sessionService.isSessionActive(refreshToken);
+    if (!isActive) {
+      throw AuthErrorFactory.sessionInactive();
+    }
+
     // Vérifier le cache d'abord
     const cacheKey = `session:${refreshToken}`;
     let session = this.cacheService.get<any>(cacheKey);
@@ -206,7 +219,7 @@ export class AuthService {
       });
 
       if (!session) {
-        throw new UnauthorizedException('Refresh token invalide ou expiré');
+        throw AuthErrorFactory.refreshTokenInvalid();
       }
 
       // Mettre en cache pour 5 minutes
@@ -216,7 +229,7 @@ export class AuthService {
     if (session.expiresAt < new Date()) {
       // Nettoyer le cache si expiré
       this.cacheService.delete(cacheKey);
-      throw new UnauthorizedException('Refresh token invalide ou expiré');
+      throw AuthErrorFactory.refreshTokenExpired();
     }
 
     // Générer un nouveau token d'accès
@@ -228,7 +241,82 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
 
-    return { accessToken };
+    // Ajouter l'ancien access token en grace period (si on peut l'extraire de la requête)
+    // Note: Dans un contexte réel, on devrait passer l'ancien token depuis le contrôleur
+    // Pour l'instant, on se concentre sur la logique de grace period
+
+    // Générer un nouveau refresh token (rotation)
+    const newRefreshToken = randomBytes(32).toString('hex');
+    const refreshExpiresIn = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d';
+    
+    // Calculer la nouvelle date d'expiration
+    const expiresAt = new Date();
+    if (refreshExpiresIn.endsWith('d')) {
+      const days = parseInt(refreshExpiresIn.replace('d', ''));
+      expiresAt.setDate(expiresAt.getDate() + days);
+    } else if (refreshExpiresIn.endsWith('h')) {
+      const hours = parseInt(refreshExpiresIn.replace('h', ''));
+      expiresAt.setHours(expiresAt.getHours() + hours);
+    } else {
+      // Fallback à 30 jours
+      expiresAt.setDate(expiresAt.getDate() + 30);
+    }
+
+    // Supprimer l'ancienne session et créer la nouvelle
+    await this.prisma.session.delete({
+      where: { refreshToken },
+    });
+
+    await this.prisma.session.create({
+      data: {
+        userId: session.user.id,
+        refreshToken: newRefreshToken,
+        expiresAt,
+        lastActivity: new Date(), // Ajouter le tracking d'activité
+      },
+    });
+
+    // Nettoyer le cache de l'ancien token
+    this.cacheService.delete(cacheKey);
+
+    // Récupérer les CELs basées sur les départements attribués
+    let cellules: any[] = [];
+    if (session.user.departements && session.user.departements.length > 0) {
+      const departementCodes = session.user.departements.map(d => d.codeDepartement);
+      
+      cellules = await this.prisma.tblCel.findMany({
+        where: {
+          lieuxVote: {
+            some: {
+              codeDepartement: { in: departementCodes },
+            },
+          },
+        },
+        select: {
+          id: true,
+          codeCellule: true,
+          libelleCellule: true,
+        },
+        orderBy: { libelleCellule: 'asc' },
+      });
+    }
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken,
+      user: {
+        id: session.user.id,
+        email: session.user.email,
+        firstName: session.user.firstName,
+        lastName: session.user.lastName,
+        role: {
+          code: session.user.role.code,
+        },
+        departements: session.user.departements || [],
+        cellules: cellules || [],
+        isActive: session.user.isActive,
+      },
+    };
   }
 
   /**
@@ -272,15 +360,28 @@ export class AuthService {
 
     // Générer le refresh token
     const refreshToken = randomBytes(32).toString('hex');
+    const refreshExpiresIn = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d';
+    
+    // Calculer la date d'expiration
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 jours
+    if (refreshExpiresIn.endsWith('d')) {
+      const days = parseInt(refreshExpiresIn.replace('d', ''));
+      expiresAt.setDate(expiresAt.getDate() + days);
+    } else if (refreshExpiresIn.endsWith('h')) {
+      const hours = parseInt(refreshExpiresIn.replace('h', ''));
+      expiresAt.setHours(expiresAt.getHours() + hours);
+    } else {
+      // Fallback à 30 jours
+      expiresAt.setDate(expiresAt.getDate() + 30);
+    }
 
-    // Sauvegarder la session
+    // Sauvegarder la session avec tracking d'activité
     await this.prisma.session.create({
       data: {
         userId,
         refreshToken,
         expiresAt,
+        lastActivity: new Date(),
       },
     });
 
@@ -295,7 +396,11 @@ export class AuthService {
       const payload = this.jwtService.verify(token);
       return payload;
     } catch (error) {
-      throw new UnauthorizedException('Token invalide');
+      if (error.name === 'TokenExpiredError') {
+        throw AuthErrorFactory.tokenExpired();
+      } else {
+        throw AuthErrorFactory.tokenInvalid();
+      }
     }
   }
 
