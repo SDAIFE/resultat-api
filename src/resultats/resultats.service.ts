@@ -286,19 +286,134 @@ export class ResultatsService {
     statistics: ZoneStatisticsDto;
     results: CandidateResultDto[];
   }> {
+    // Gérer le cas où departmentId contient aussi l'ID de la commune (communes d'Abidjan)
+    // Format: departmentId-communeId ou simplement departmentId
+    let departmentId: string = '';
+    let communeId: string | null = null;
+    
+    if (query.departmentId) {
+      if (query.departmentId.includes('-')) {
+        const parts = query.departmentId.split('-');
+        // Le premier ID est le département, le deuxième est la commune
+        departmentId = parts[0];
+        communeId = parts[1];
+      } else {
+        departmentId = query.departmentId;
+      }
+    }
+    
+    // D'abord, vérifier si le département existe dans la base
+    const departementCheck = await this.prisma.tblDept.findUnique({
+      where: { id: departmentId },
+      select: { id: true, libelleDepartement: true, statutPublication: true }
+    });
+    
+    // Récupérer le département sans include pour éviter les 2100 paramètres
     const departement = await this.prisma.tblDept.findFirst({
       where: {
-        id: query.departmentId,
-        OR: [
-          { statutPublication: 'PUBLIE' },
-          { statutPublication: 'PUBLIÉ' },
-          { statutPublication: 'PUBLISHED' },
-          { statutPublication: 'ACTIF' },
-          { statutPublication: 'ACTIVE' },
-          { statutPublication: 'EN_COURS' },
-          { statutPublication: 'EN COURS' },
-          { statutPublication: 'IN_PROGRESS' }
-        ]
+        id: departmentId,
+        statutPublication: {
+          in: ['PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS']
+        }
+      }
+    });
+
+    if (!departement) {
+      console.log('❌ Département non trouvé ou non publié:', departmentId);
+      console.log('❌ Statut du département dans la base:', departementCheck?.statutPublication);
+      throw new NotFoundException('Département non trouvé ou non publié');
+    }
+    
+    // Récupérer la région séparément
+    const region = await this.prisma.tblReg.findUnique({
+      where: { id: departement.codeRegion }
+    });
+    
+    // Récupérer les statistiques des bureaux du département directement
+    const bureauxStats = await this.prisma.tblBv.aggregate({
+      where: {
+        codeDepartement: departement.codeDepartement,
+        ...(communeId ? {
+          commune: { id: communeId }
+        } : {})
+      },
+      _sum: {
+        inscrits: true,
+        totalVotants: true,
+        bulletinsBlancs: true,
+        bulletinsNuls: true
+      },
+      _count: {
+        id: true
+      }
+    });
+    
+    const totalInscrits = bureauxStats._sum.inscrits || 0;
+    const totalVotants = bureauxStats._sum.totalVotants || 0;
+    const totalBlancs = bureauxStats._sum.bulletinsBlancs || 0;
+    const totalNuls = bureauxStats._sum.bulletinsNuls || 0;
+    const nombreBureaux = bureauxStats._count.id;
+    
+    // Compter les lieux de vote
+    const nombreLieuxVote = await this.prisma.tblLv.count({
+      where: {
+        codeDepartement: departement.codeDepartement
+      }
+    });
+
+    const zoneInfo: ZoneInfoDto = {
+      type: ZoneType.DEPARTMENT,
+      id: departement.id,
+      name: departement.libelleDepartement,
+      parentZone: {
+        type: 'region',
+        name: region?.libelleRegion || 'Région inconnue'
+      }
+    };
+
+    const statistics: ZoneStatisticsDto = {
+      totalInscrits,
+      totalVotants,
+      tauxParticipation: totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0,
+      totalExprimes: totalVotants - totalBlancs - totalNuls,
+      totalBlancs,
+      totalNuls,
+      nombreBureaux,
+      nombreLieuxVote,
+      nombreDepartements: 1
+    };
+
+    // Passer le communeId si spécifié pour filtrer les résultats
+    const zoneData = [
+      { 
+        type: 'department', 
+        id: departement.id, 
+        name: departement.libelleDepartement,
+        communeId: communeId || undefined
+      }
+    ];
+    
+    const results = await this.calculateCandidateResultsForZone(zoneData);
+
+    return { zoneInfo, statistics, results };
+  }
+
+  /**
+   * Récupérer et agréger les résultats de plusieurs départements (communes d'Abidjan)
+   */
+  private async getMultipleDepartmentsResults(departmentIds: string[]): Promise<{
+    zoneInfo: ZoneInfoDto;
+    statistics: ZoneStatisticsDto;
+    results: CandidateResultDto[];
+  }> {
+    // Récupérer tous les départements
+    console.log('🔍 Recherche de plusieurs départements:', departmentIds);
+    const departements = await this.prisma.tblDept.findMany({
+      where: {
+        id: { in: departmentIds },
+        statutPublication: {
+          in: ['PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS']
+        }
       },
       include: {
         region: true,
@@ -310,109 +425,30 @@ export class ResultatsService {
       }
     });
 
-    if (!departement) {
-      throw new NotFoundException('Département non trouvé ou non publié');
+    if (departements.length === 0) {
+      throw new NotFoundException('Aucun département trouvé ou publié');
     }
+
+    // Utiliser le premier département pour les infos de base
+    const firstDept = departements[0];
+    const allDeptNames = departements.map(d => d.libelleDepartement).join(', ');
 
     const zoneInfo: ZoneInfoDto = {
       type: ZoneType.DEPARTMENT,
-      id: departement.id,
-      name: departement.libelleDepartement,
+      id: firstDept.id,
+      name: `Agrégation de ${departements.length} départements (${allDeptNames})`,
       parentZone: {
         type: 'region',
-        name: departement.region.libelleRegion
+        name: firstDept.region.libelleRegion
       }
     };
 
-    // Agrégation des statistiques de tous les bureaux du département
+    // Agrégation des statistiques de tous les départements
     let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0;
     let nombreBureaux = 0;
+    let nombreLieuxVote = 0;
 
-    departement.lieuxVote.forEach(lv => {
-      lv.bureauxVote.forEach(bv => {
-        totalInscrits += bv.inscrits || 0;
-        totalVotants += bv.totalVotants || 0;
-        totalBlancs += bv.bulletinsBlancs || 0;
-        totalNuls += bv.bulletinsNuls || 0;
-        nombreBureaux++;
-      });
-    });
-
-    const statistics: ZoneStatisticsDto = {
-      totalInscrits,
-      totalVotants,
-      tauxParticipation: totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0,
-      totalExprimes: totalVotants - totalBlancs - totalNuls,
-      totalBlancs,
-      totalNuls,
-      nombreBureaux,
-      nombreLieuxVote: departement.lieuxVote.length,
-      nombreDepartements: 1
-    };
-
-    const results = await this.calculateCandidateResultsForZone([
-      { type: 'department', id: departement.id, name: departement.libelleDepartement }
-    ]);
-
-    return { zoneInfo, statistics, results };
-  }
-
-  /**
-   * Récupérer les résultats d'une région (agrégation des départements)
-   */
-  private async getRegionResults(query: ResultsByZoneQueryDto): Promise<{
-    zoneInfo: ZoneInfoDto;
-    statistics: ZoneStatisticsDto;
-    results: CandidateResultDto[];
-  }> {
-    const region = await this.prisma.tblReg.findFirst({
-      where: {
-        id: query.regionId
-      },
-      include: {
-        departements: {
-          where: {
-            OR: [
-              { statutPublication: 'PUBLIE' },
-              { statutPublication: 'PUBLIÉ' },
-              { statutPublication: 'PUBLISHED' },
-              { statutPublication: 'ACTIF' },
-              { statutPublication: 'ACTIVE' },
-              { statutPublication: 'EN_COURS' },
-              { statutPublication: 'EN COURS' },
-              { statutPublication: 'IN_PROGRESS' }
-            ]
-          },
-          include: {
-            lieuxVote: {
-              include: {
-                bureauxVote: true
-              }
-            }
-          }
-        }
-      }
-    });
-
-    if (!region) {
-      throw new NotFoundException('Région non trouvée');
-    }
-
-    const zoneInfo: ZoneInfoDto = {
-      type: ZoneType.REGION,
-      id: region.id,
-      name: region.libelleRegion,
-      parentZone: {
-        type: 'country',
-        name: 'Côte d\'Ivoire'
-      }
-    };
-
-    // Agrégation des statistiques de tous les bureaux de la région
-    let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0;
-    let nombreBureaux = 0, nombreLieuxVote = 0;
-
-    region.departements.forEach(dept => {
+    departements.forEach(dept => {
       dept.lieuxVote.forEach(lv => {
         nombreLieuxVote++;
         lv.bureauxVote.forEach(bv => {
@@ -434,7 +470,100 @@ export class ResultatsService {
       totalNuls,
       nombreBureaux,
       nombreLieuxVote,
-      nombreDepartements: region.departements.length
+      nombreDepartements: departements.length
+    };
+
+    // Calculer les résultats par candidat pour tous les départements
+    const zoneData = departements.map(dept => ({ 
+      type: 'department', 
+      id: dept.id, 
+      name: dept.libelleDepartement 
+    }));
+    const results = await this.calculateCandidateResultsForZone(zoneData);
+
+    return { zoneInfo, statistics, results };
+  }
+
+  /**
+   * Récupérer les résultats d'une région (agrégation des départements)
+   */
+  private async getRegionResults(query: ResultsByZoneQueryDto): Promise<{
+    zoneInfo: ZoneInfoDto;
+    statistics: ZoneStatisticsDto;
+    results: CandidateResultDto[];
+  }> {
+    // Récupérer la région sans include pour éviter les 2100 paramètres
+    const region = await this.prisma.tblReg.findFirst({
+      where: {
+        id: query.regionId
+      }
+    });
+
+    if (!region) {
+      throw new NotFoundException('Région non trouvée');
+    }
+
+    // Récupérer les départements publiés de cette région
+    const departements = await this.prisma.tblDept.findMany({
+      where: {
+        codeRegion: region.codeRegion,
+        statutPublication: {
+          in: ['PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS']
+        }
+      }
+    });
+
+    // Récupérer les statistiques des bureaux de la région directement
+    const codesDepartements = departements.map(d => d.codeDepartement);
+    
+    const bureauxStats = await this.prisma.tblBv.aggregate({
+      where: {
+        codeDepartement: { in: codesDepartements }
+      },
+      _sum: {
+        inscrits: true,
+        totalVotants: true,
+        bulletinsBlancs: true,
+        bulletinsNuls: true
+      },
+      _count: {
+        id: true
+      }
+    });
+    
+    const totalInscrits = bureauxStats._sum.inscrits || 0;
+    const totalVotants = bureauxStats._sum.totalVotants || 0;
+    const totalBlancs = bureauxStats._sum.bulletinsBlancs || 0;
+    const totalNuls = bureauxStats._sum.bulletinsNuls || 0;
+    const nombreBureaux = bureauxStats._count.id;
+    
+    // Compter les lieux de vote
+    const nombreLieuxVote = await this.prisma.tblLv.count({
+      where: {
+        codeDepartement: { in: codesDepartements }
+      }
+    });
+
+    const zoneInfo: ZoneInfoDto = {
+      type: ZoneType.REGION,
+      id: region.id,
+      name: region.libelleRegion,
+      parentZone: {
+        type: 'country',
+        name: 'Côte d\'Ivoire'
+      }
+    };
+
+    const statistics: ZoneStatisticsDto = {
+      totalInscrits,
+      totalVotants,
+      tauxParticipation: totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0,
+      totalExprimes: totalVotants - totalBlancs - totalNuls,
+      totalBlancs,
+      totalNuls,
+      nombreBureaux,
+      nombreLieuxVote,
+      nombreDepartements: departements.length
     };
 
     const results = await this.calculateCandidateResultsForZone([
@@ -512,6 +641,7 @@ export class ResultatsService {
     };
 
     // Déterminer le type de zone et construire la condition de filtrage
+    
     if (zoneData.some(item => item.type === 'pollingStation')) {
       // Filtrage par bureau de vote spécifique
       const bureauIds = zoneData
@@ -532,6 +662,10 @@ export class ResultatsService {
         .filter(item => item.type === 'department')
         .map(item => item.id);
       
+      const communeIds = zoneData
+        .filter(item => item.type === 'department' && item.communeId)
+        .map(item => item.communeId);
+      
       whereCondition.departement = {
         id: { in: deptIds },
         OR: [
@@ -545,6 +679,13 @@ export class ResultatsService {
           { statutPublication: 'IN_PROGRESS' }
         ]
       };
+      
+      // Si une commune est spécifiée, filtrer aussi par commune
+      if (communeIds.length > 0) {
+        whereCondition.commune = {
+          id: { in: communeIds }
+        };
+      }
     } else if (zoneData.some(item => item.type === 'region')) {
       // Filtrage par région
       const regionIds = zoneData
@@ -579,12 +720,16 @@ export class ResultatsService {
           include: {
             cellule: true
           }
-        }
+        },
+        commune: true
       }
     });
 
+    console.log('📊 Nombre de bureaux de vote trouvés:', bureauxVote.length);
+
     if (bureauxVote.length === 0) {
       // Aucun bureau trouvé, retourner des résultats vides
+      console.log('❌ Aucun bureau de vote trouvé avec les critères de filtrage');
       return [];
     }
 
@@ -903,64 +1048,153 @@ export class ResultatsService {
         return cachedResult;
       }
 
-      // Récupérer les bureaux de vote des départements ET communes publiés
-      const bureauxPublies = await this.prisma.tblBv.findMany({
+      // Pour éviter la limite de 2100 paramètres, on récupère d'abord les IDs des départements publiés
+      const statusList = ['PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS'];
+      
+      // 1. D'abord, récupérer uniquement les IDs des départements publiés
+      const departementsPublies = await this.prisma.tblDept.findMany({
         where: {
-          OR: [
-            // Bureaux des départements publiés
-            {
-              departement: {
-                OR: [
-                  { statutPublication: 'PUBLIE' },
-                  { statutPublication: 'PUBLIÉ' },
-                  { statutPublication: 'PUBLISHED' },
-                  { statutPublication: 'ACTIF' },
-                  { statutPublication: 'ACTIVE' },
-                  { statutPublication: 'EN_COURS' },
-                  { statutPublication: 'EN COURS' },
-                  { statutPublication: 'IN_PROGRESS' }
-                ]
-              }
-            },
-            // Bureaux des communes publiées (pour Abidjan notamment)
-            {
-              commune: {
-                OR: [
-                  { statutPublication: 'PUBLIE' },
-                  { statutPublication: 'PUBLIÉ' },
-                  { statutPublication: 'PUBLISHED' },
-                  { statutPublication: 'ACTIF' },
-                  { statutPublication: 'ACTIVE' },
-                  { statutPublication: 'EN_COURS' },
-                  { statutPublication: 'EN COURS' },
-                  { statutPublication: 'IN_PROGRESS' }
-                ]
-              }
-            }
-          ]
+          statutPublication: {
+            in: statusList
+          }
+        },
+        select: {
+          id: true
+        }
+      });
+        
+      const departementsIds = departementsPublies.map(dept => dept.id);
+      
+      console.log('📊 Nombre de départements publiés:', departementsIds.length);
+      
+      // 2. Récupérer TOUS les départements avec leurs relations (une seule requête)
+      const departementsAvecRelations = await this.prisma.tblDept.findMany({
+        where: {
+          id: {
+            in: departementsIds
+          }
         },
         include: {
+          region: true
+        }
+      });
+      
+      // 3. Récupérer TOUS les lieux de vote pour ces départements
+      const lieuxVote = await this.prisma.tblLv.findMany({
+        where: {
           departement: {
-            include: {
-              region: true
+            id: {
+              in: departementsIds
             }
-          },
-          commune: true,
-          lieuVote: true
-        },
-        orderBy: [
-          { departement: { region: { libelleRegion: 'asc' } } },
-          { departement: { libelleDepartement: 'asc' } },
-          { commune: { libelleCommune: 'asc' } },
-          { lieuVote: { libelleLieuVote: 'asc' } },
-          { numeroBureauVote: 'asc' }
-        ]
+          }
+        }
+      });
+      
+      // 4. Récupérer UNIQUEMENT les communes publiées (pour Abidjan)
+      const communes = await this.prisma.tblCom.findMany({
+        where: {
+          statutPublication: {
+            in: statusList
+          }
+        }
+      });
+      
+      // 5. Récupérer les bureaux SANS include pour éviter les 2100 paramètres
+      const bureauxDepartements = await this.prisma.tblBv.findMany({
+        where: {
+          departement: {
+            id: {
+              in: departementsIds
+            }
+          }
+        }
+      });
+      
+      console.log('📊 Nombre de bureaux trouvés:', bureauxDepartements.length);
+      
+      // 6. Créer des maps pour les relations
+      // Pour le département : utiliser codeDepartement
+      const departementsMap = new Map(departementsAvecRelations.map(d => [d.codeDepartement, d]));
+      
+      // Pour le lieu de vote : utiliser la clé composite complète (codeDepartement + codeSousPrefecture + codeCommune + codeLieuVote)
+      const lieuxVoteMap = new Map(lieuxVote.map(lv => [`${lv.codeDepartement}-${lv.codeSousPrefecture}-${lv.codeCommune}-${lv.codeLieuVote}`, lv]));
+      
+      // Pour la commune : utiliser codeDepartement + codeSousPrefecture + codeCommune (clé composite)
+      const communesMap = new Map(communes.map(c => [`${c.codeDepartement}-${c.codeSousPrefecture}-${c.codeCommune}`, c]));
+      
+      // 7. Enrichir manuellement les bureaux avec leurs relations
+      const bureauxEnrichis = bureauxDepartements.map(bureau => ({
+        ...bureau,
+        departement: departementsMap.get(bureau.codeDepartement),
+        lieuVote: lieuxVoteMap.get(`${bureau.codeDepartement}-${bureau.codeSousPrefecture}-${bureau.codeCommune}-${bureau.codeLieuVote}`),
+        commune: bureau.codeCommune ? communesMap.get(`${bureau.codeDepartement}-${bureau.codeSousPrefecture}-${bureau.codeCommune}`) : null
+      }));
+      
+      // 8. Trier les résultats
+      bureauxEnrichis.sort((a, b) => {
+        const regionCompare = a.departement?.region?.libelleRegion?.localeCompare(b.departement?.region?.libelleRegion || '') || 0;
+        if (regionCompare !== 0) return regionCompare;
+        
+        const deptCompare = a.departement?.libelleDepartement?.localeCompare(b.departement?.libelleDepartement || '') || 0;
+        if (deptCompare !== 0) return deptCompare;
+        
+        const lieuCompare = a.lieuVote?.libelleLieuVote?.localeCompare(b.lieuVote?.libelleLieuVote || '') || 0;
+        if (lieuCompare !== 0) return lieuCompare;
+        
+        return a.numeroBureauVote?.localeCompare(b.numeroBureauVote || '') || 0;
+      });
+
+      // 2. COMMENTÉ: Récupérer les bureaux des communes publiées (pour Abidjan notamment)
+      // On utilise maintenant uniquement le statut de publication du département Abidjan
+      // const bureauxCommunes = await this.prisma.tblBv.findMany({
+      //   where: {
+      //     commune: {
+      //       statutPublication: {
+      //         in: statusList
+      //       }
+      //     }
+      //   },
+      //   include: {
+      //     departement: {
+      //       include: {
+      //         region: true
+      //       }
+      //     },
+      //     commune: true,
+      //     lieuVote: true
+      //   },
+      //   orderBy: [
+      //     { departement: { region: { libelleRegion: 'asc' } } },
+      //     { departement: { libelleDepartement: 'asc' } },
+      //     { commune: { libelleCommune: 'asc' } },
+      //     { lieuVote: { libelleLieuVote: 'asc' } },
+      //     { numeroBureauVote: 'asc' }
+      //   ]
+      // });
+
+      // 9. Filtrer les bureaux : pour Abidjan, n'inclure que les bureaux des communes publiées
+      const bureauxPublies = bureauxEnrichis.filter(bureau => {
+        const isAbidjan = bureau.departement?.libelleDepartement?.toUpperCase() === 'ABIDJAN';
+        
+        // Si c'est Abidjan et qu'on a une commune, vérifier qu'elle est publiée
+        if (isAbidjan && bureau.commune) {
+          return communesMap.has(`${bureau.codeDepartement}-${bureau.codeSousPrefecture}-${bureau.codeCommune}`);
+        }
+        
+        // Pour les autres départements ou si pas de commune, inclure le bureau
+        return true;
       });
 
       // Construire la structure hiérarchique
       const regionsMap = new Map<string, PublishedRegionDto>();
 
       bureauxPublies.forEach(bureau => {
+        // Ignorer les bureaux sans département ou lieu de vote
+        if (!bureau.departement || !bureau.lieuVote) {
+          console.warn('⚠️ Bureau sans département ou lieu de vote:', bureau.id);
+          return;
+        }
+        
         const region = bureau.departement.region;
         const departement = bureau.departement;
         const commune = bureau.commune;
