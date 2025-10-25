@@ -24,13 +24,14 @@ import {
   ResultsByZoneQueryDto
 } from './dto/results-by-zone.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { JwtOrApiTokenGuard } from '../auth/guards/jwt-or-api-token.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 
 @ApiTags('Résultats Électoraux')
 @Controller('elections')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtOrApiTokenGuard, RolesGuard)
 @ApiBearerAuth()
 export class ResultatsController {
   constructor(private readonly resultatsService: ResultatsService) {}
@@ -43,7 +44,7 @@ export class ResultatsController {
   @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
   @ApiOperation({ 
     summary: 'Récupérer les données du header des résultats',
-    description: 'Récupère uniquement les données essentielles pour le header des résultats électoraux'
+    description: 'Récupère uniquement les données essentielles pour le header des résultats électoraux. Accessible avec JWT utilisateur ou token API public.'
   })
   @ApiParam({ 
     name: 'electionId', 
@@ -61,7 +62,7 @@ export class ResultatsController {
   })
   @ApiResponse({ 
     status: 401, 
-    description: 'Non authentifié' 
+    description: 'Non authentifié - Token JWT ou API manquant/invalide' 
   })
   @ApiResponse({ 
     status: 404, 
@@ -276,7 +277,7 @@ export class ResultatsController {
   @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
   @ApiOperation({ 
     summary: 'Récupérer les zones géographiques avec résultats publiés',
-    description: 'Retourne uniquement les zones géographiques (Région → Département → Lieu de vote → Bureau de vote) dont les résultats électoraux ont été publiés'
+    description: 'Retourne uniquement les zones géographiques (Région → Département → Lieu de vote → Bureau de vote) dont les résultats électoraux ont été publiés. Accessible avec JWT utilisateur ou token API public.'
   })
   @ApiParam({ 
     name: 'electionId', 
@@ -294,11 +295,11 @@ export class ResultatsController {
   })
   @ApiResponse({ 
     status: 401, 
-    description: 'Non authentifié' 
+    description: 'Non authentifié - Token JWT ou API manquant/invalide' 
   })
   @ApiResponse({ 
     status: 403, 
-    description: 'Accès refusé' 
+    description: 'Accès refusé - Rôle insuffisant' 
   })
   @ApiResponse({ 
     status: 404, 
@@ -314,7 +315,7 @@ export class ResultatsController {
   @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
   @ApiOperation({ 
     summary: 'Récupérer les informations complètes des candidats',
-    description: 'Récupère toutes les informations des candidats avec leurs résultats électoraux pour l\'affichage dans l\'onglet Résultats par candidat'
+    description: 'Récupère toutes les informations des candidats avec leurs résultats électoraux pour l\'affichage dans l\'onglet Résultats par candidat. Accessible avec JWT utilisateur ou token API public.'
   })
   @ApiParam({ 
     name: 'electionId', 
@@ -331,7 +332,7 @@ export class ResultatsController {
   })
   @ApiResponse({ 
     status: 401, 
-    description: 'Non authentifié' 
+    description: 'Non authentifié - Token JWT ou API manquant/invalide' 
   })
   @ApiResponse({ 
     status: 404, 
@@ -419,7 +420,7 @@ export class ResultatsController {
   @Roles('ADMIN', 'USER', 'VIEWER', 'SADMIN')
   @ApiOperation({ 
     summary: 'Récupérer les résultats par zone',
-    description: 'Récupère les résultats électoraux agrégés selon le niveau de zone sélectionné (région, département, lieu de vote, ou bureau de vote)'
+    description: 'Récupère les résultats électoraux agrégés selon le niveau de zone sélectionné (région, département, lieu de vote, ou bureau de vote). Accessible avec JWT utilisateur ou token API public.'
   })
   @ApiParam({ 
     name: 'electionId', 
@@ -461,7 +462,7 @@ export class ResultatsController {
   })
   @ApiResponse({ 
     status: 401, 
-    description: 'Token invalide/expiré' 
+    description: 'Non authentifié - Token JWT ou API manquant/invalide' 
   })
   @ApiResponse({ 
     status: 403, 

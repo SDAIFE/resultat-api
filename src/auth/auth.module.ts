@@ -7,6 +7,9 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { DatabaseModule } from '../database/database.module';
 import { CommonModule } from '../common/common.module';
+import { ApiTokenGuard } from './guards/api-token.guard';
+import { JwtOrApiTokenGuard } from './guards/jwt-or-api-token.guard';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Module({
   imports: [
@@ -32,7 +35,7 @@ import { CommonModule } from '../common/common.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtModule],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, ApiTokenGuard, JwtOrApiTokenGuard],
+  exports: [AuthService, JwtModule, JwtAuthGuard, ApiTokenGuard, JwtOrApiTokenGuard],
 })
 export class AuthModule {}
