@@ -903,21 +903,41 @@ export class ResultatsService {
         return cachedResult;
       }
 
-      // Récupérer les bureaux de vote des départements publiés
+      // Récupérer les bureaux de vote des départements ET communes publiés
       const bureauxPublies = await this.prisma.tblBv.findMany({
         where: {
-          departement: {
-            OR: [
-              { statutPublication: 'PUBLIE' },
-              { statutPublication: 'PUBLIÉ' },
-              { statutPublication: 'PUBLISHED' },
-              { statutPublication: 'ACTIF' },
-              { statutPublication: 'ACTIVE' },
-              { statutPublication: 'EN_COURS' },
-              { statutPublication: 'EN COURS' },
-              { statutPublication: 'IN_PROGRESS' }
-            ]
-          }
+          OR: [
+            // Bureaux des départements publiés
+            {
+              departement: {
+                OR: [
+                  { statutPublication: 'PUBLIE' },
+                  { statutPublication: 'PUBLIÉ' },
+                  { statutPublication: 'PUBLISHED' },
+                  { statutPublication: 'ACTIF' },
+                  { statutPublication: 'ACTIVE' },
+                  { statutPublication: 'EN_COURS' },
+                  { statutPublication: 'EN COURS' },
+                  { statutPublication: 'IN_PROGRESS' }
+                ]
+              }
+            },
+            // Bureaux des communes publiées (pour Abidjan notamment)
+            {
+              commune: {
+                OR: [
+                  { statutPublication: 'PUBLIE' },
+                  { statutPublication: 'PUBLIÉ' },
+                  { statutPublication: 'PUBLISHED' },
+                  { statutPublication: 'ACTIF' },
+                  { statutPublication: 'ACTIVE' },
+                  { statutPublication: 'EN_COURS' },
+                  { statutPublication: 'EN COURS' },
+                  { statutPublication: 'IN_PROGRESS' }
+                ]
+              }
+            }
+          ]
         },
         include: {
           departement: {
@@ -925,11 +945,13 @@ export class ResultatsService {
               region: true
             }
           },
+          commune: true,
           lieuVote: true
         },
         orderBy: [
           { departement: { region: { libelleRegion: 'asc' } } },
           { departement: { libelleDepartement: 'asc' } },
+          { commune: { libelleCommune: 'asc' } },
           { lieuVote: { libelleLieuVote: 'asc' } },
           { numeroBureauVote: 'asc' }
         ]
@@ -941,6 +963,7 @@ export class ResultatsService {
       bureauxPublies.forEach(bureau => {
         const region = bureau.departement.region;
         const departement = bureau.departement;
+        const commune = bureau.commune;
         const lieuVote = bureau.lieuVote;
 
         // Créer ou récupérer la région
@@ -954,12 +977,23 @@ export class ResultatsService {
 
         const regionData = regionsMap.get(region.id)!;
 
-        // Créer ou récupérer le département
-        let departmentData = regionData.departments.find(d => d.id === departement.id);
+        // Pour Abidjan, utiliser le nom de la commune au lieu du département
+        // Pour les autres départements, utiliser le nom du département
+        const isAbidjan = departement.libelleDepartement.toUpperCase() === 'ABIDJAN';
+        const departmentName = isAbidjan && commune 
+          ? `${departement.libelleDepartement} - ${commune.libelleCommune}`
+          : departement.libelleDepartement;
+        
+        const departmentId = isAbidjan && commune 
+          ? `${departement.id}-${commune.id}`
+          : departement.id;
+
+        // Créer ou récupérer le département (ou commune pour Abidjan)
+        let departmentData = regionData.departments.find(d => d.id === departmentId);
         if (!departmentData) {
           departmentData = {
-            id: departement.id,
-            name: departement.libelleDepartement,
+            id: departmentId,
+            name: departmentName,
             votingPlaces: []
           };
           regionData.departments.push(departmentData);
