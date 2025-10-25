@@ -1364,9 +1364,9 @@ export class ResultatsService {
       votants,
       votantsHommes,
       votantsFemmes,
-      exprimes: suffrageExprime,
-      blancs: bulletinsBlancs,
-      nuls: bulletinsNuls,
+      suffrageExprime: suffrageExprime,
+      bulletinsBlancs: bulletinsBlancs,
+      bulletinsNuls: bulletinsNuls,
       tauxParticipation,
       results: [] // Les résultats par candidat peuvent être ajoutés si nécessaire
     };
