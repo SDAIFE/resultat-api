@@ -82,28 +82,38 @@ export class UploadService {
       const mapping = this.csvAnalyzer.mapCsvColumnsToDbFields(analysis.headers);
       const lieuVoteMap = this.csvAnalyzer.extractLieuVoteFromData(analysis.dataRows);
 
-      // 5. ✅ Valider les données avec contrôles stricts
-      const validation = await this.validateExcelData(analysis.dataRows, mapping);
+      // 5. ❌ VALIDATION STRICTE DÉSACTIVÉE - Permet l'upload de fichiers avec cellules vides
+      // const validation = await this.validateExcelData(analysis.dataRows, mapping);
       
-      if (!validation.isValid) {
-        // Construire un message d'erreur détaillé
-        let errorMessage = 'Validation échouée - Erreurs détectées :\n';
+      // if (!validation.isValid) {
+      //   // Construire un message d'erreur détaillé
+      //   let errorMessage = 'Validation échouée - Erreurs détectées :\n';
         
-        if (validation.colonnesManquantes.length > 0) {
-          errorMessage += `\n• Colonnes manquantes : ${validation.colonnesManquantes.join(', ')}`;
-        }
+      //   if (validation.colonnesManquantes.length > 0) {
+      //     errorMessage += `\n• Colonnes manquantes : ${validation.colonnesManquantes.join(', ')}`;
+      //   }
         
-        if (validation.lignesEnErreur.length > 0) {
-          errorMessage += '\n• Erreurs de saisie détectées :';
-          validation.lignesEnErreur.forEach(ligne => {
-            errorMessage += `\n  - Ligne ${ligne.ligne} : ${ligne.erreurs.join('; ')}`;
-          });
-        }
+      //   if (validation.lignesEnErreur.length > 0) {
+      //     errorMessage += '\n• Erreurs de saisie détectées :';
+      //     validation.lignesEnErreur.forEach(ligne => {
+      //       errorMessage += `\n  - Ligne ${ligne.ligne} : ${ligne.erreurs.join('; ')}`;
+      //     });
+      //   }
         
-        errorMessage += '\n\nVeuillez corriger ces erreurs avant de réessayer l\'import.';
+      //   errorMessage += '\n\nVeuillez corriger ces erreurs avant de réessayer l\'import.';
         
-        throw new BadRequestException(errorMessage);
-      }
+      //   throw new BadRequestException(errorMessage);
+      // }
+
+      // Créer une validation factice pour le formatage de la réponse
+      const validation = {
+        isValid: true,
+        errors: [],
+        warnings: [],
+        colonnesManquantes: [],
+        colonnesInconnues: [],
+        lignesEnErreur: [],
+      };
 
       // 6. ✅ Traiter et importer les données avec les chemins des fichiers
       const processedData = await this.processExcelDataWithPaths(
@@ -314,28 +324,38 @@ export class UploadService {
         mapping = this.excelAnalyzer.mapCompilCecColumnsToDbFields(analysis.headers);
       }
       
-      // Valider les données avec contrôles stricts
-      const validation = await this.validateExcelData(analysis.dataRows, mapping);
+      // ❌ VALIDATION STRICTE DÉSACTIVÉE - Permet l'upload de fichiers avec cellules vides
+      // const validation = await this.validateExcelData(analysis.dataRows, mapping);
       
-      if (!validation.isValid) {
-        // Construire un message d'erreur détaillé
-        let errorMessage = 'Validation échouée - Erreurs détectées :\n';
+      // if (!validation.isValid) {
+      //   // Construire un message d'erreur détaillé
+      //   let errorMessage = 'Validation échouée - Erreurs détectées :\n';
         
-        if (validation.colonnesManquantes.length > 0) {
-          errorMessage += `\n• Colonnes manquantes : ${validation.colonnesManquantes.join(', ')}`;
-        }
+      //   if (validation.colonnesManquantes.length > 0) {
+      //     errorMessage += `\n• Colonnes manquantes : ${validation.colonnesManquantes.join(', ')}`;
+      //   }
         
-        if (validation.lignesEnErreur.length > 0) {
-          errorMessage += '\n• Erreurs de saisie détectées :';
-          validation.lignesEnErreur.forEach(ligne => {
-            errorMessage += `\n  - Ligne ${ligne.ligne} : ${ligne.erreurs.join('; ')}`;
-          });
-        }
+      //   if (validation.lignesEnErreur.length > 0) {
+      //     errorMessage += '\n• Erreurs de saisie détectées :';
+      //     validation.lignesEnErreur.forEach(ligne => {
+      //       errorMessage += `\n  - Ligne ${ligne.ligne} : ${ligne.erreurs.join('; ')}`;
+      //     });
+      //   }
         
-        errorMessage += '\n\nVeuillez corriger ces erreurs avant de réessayer l\'import.';
+      //   errorMessage += '\n\nVeuillez corriger ces erreurs avant de réessayer l\'import.';
         
-        throw new BadRequestException(errorMessage);
-      }
+      //   throw new BadRequestException(errorMessage);
+      // }
+
+      // Créer une validation factice pour le formatage de la réponse
+      const validation = {
+        isValid: true,
+        errors: [],
+        warnings: [],
+        colonnesManquantes: [],
+        colonnesInconnues: [],
+        lignesEnErreur: [],
+      };
 
       // Insérer directement les données dans TblImportExcelCel
       const processedData = await this.processExcelData(analysis.dataRows, mapping, codeCellule, cel.libelleCellule, userId, lieuVoteMap);
@@ -601,67 +621,67 @@ export class UploadService {
     let lignesReussies = 0;
     let lignesEchouees = 0;
 
-    // 🔒 VALIDATION STRICTE : Vérifier qu'aucune cellule critique n'est null/vide
-    const champsObligatoires = [
-      'referenceLieuVote',
-      'numeroBureauVote',
-      'populationTotale',
-      'populationHommes',
-      'populationFemmes',
-      'totalVotants',
-      'votantsHommes',
-      'votantsFemmes',
-      'tauxParticipation',
-      'bulletinsNuls',
-      'bulletinsBlancs',
-      'suffrageExprime',
-      'score1',
-      'score2',
-      'score3',
-      'score4',
-      'score5'
-    ];
+    // ❌ VALIDATION STRICTE DÉSACTIVÉE - Permet l'upload de fichiers avec cellules vides
+    // const champsObligatoires = [
+    //   'referenceLieuVote',
+    //   'numeroBureauVote',
+    //   'populationTotale',
+    //   'populationHommes',
+    //   'populationFemmes',
+    //   'totalVotants',
+    //   'votantsHommes',
+    //   'votantsFemmes',
+    //   'tauxParticipation',
+    //   'bulletinsNuls',
+    //   'bulletinsBlancs',
+    //   'suffrageExprime',
+    //   'score1',
+    //   'score2',
+    //   'score3',
+    //   'score4',
+    //   'score5'
+    // ];
 
     // Vérifier toutes les lignes AVANT toute insertion
-    for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
-      const row = dataRows[rowIndex];
-      const ligneNumero = rowIndex + 13; // Ligne 13+ dans Excel
+    // for (let rowIndex = 0; rowIndex < dataRows.length; rowIndex++) {
+    //   const row = dataRows[rowIndex];
+    //   const ligneNumero = rowIndex + 13; // Ligne 13+ dans Excel
 
-      // Construire un objet temporaire pour vérifier les valeurs
-      const tempData: any = {};
-      Object.entries(mapping).forEach(([colName, mappingInfo]) => {
-        const value = row[mappingInfo.index];
+    //   // Construire un objet temporaire pour vérifier les valeurs
+    //   const tempData: any = {};
+    //   Object.entries(mapping).forEach(([colName, mappingInfo]) => {
+    //     const value = row[mappingInfo.index];
         
-        if (mappingInfo.type === 'split' && colName.includes('CEC')) {
-          const celInfo = this.excelAnalyzer.extractCelInfoFromCecColumn(value);
-          tempData.referenceLieuVote = celInfo.referenceLieuVote;
-          tempData.libelleLieuVote = celInfo.libelleLieuVote;
-        } else {
-          tempData[mappingInfo.field] = value;
-        }
-      });
+    //     if (mappingInfo.type === 'split' && colName.includes('CEC')) {
+    //       const celInfo = this.excelAnalyzer.extractCelInfoFromCecColumn(value);
+    //       tempData.referenceLieuVote = celInfo.referenceLieuVote;
+    //       tempData.libelleLieuVote = celInfo.libelleLieuVote;
+    //     } else {
+    //       tempData[mappingInfo.field] = value;
+    //     }
+    //   });
 
-      // Vérifier chaque champ obligatoire
-      for (const champ of champsObligatoires) {
-        const valeur = tempData[champ];
+    //   // Vérifier chaque champ obligatoire
+    //   for (const champ of champsObligatoires) {
+    //     const valeur = tempData[champ];
         
-        // Vérifier si null, undefined, ou chaîne vide
-        if (valeur === null || valeur === undefined || String(valeur).trim() === '') {
-          // Trouver le nom de la colonne correspondante
-          const colonneNom = Object.entries(mapping).find(
-            ([_, info]) => info.field === champ
-          )?.[0] || champ;
+    //     // Vérifier si null, undefined, ou chaîne vide
+    //     if (valeur === null || valeur === undefined || String(valeur).trim() === '') {
+    //       // Trouver le nom de la colonne correspondante
+    //       const colonneNom = Object.entries(mapping).find(
+    //         ([_, info]) => info.field === champ
+    //       )?.[0] || champ;
 
-          throw new BadRequestException(
-            `❌ Cellule vide détectée - Upload interrompu\n\n` +
-            `• Ligne ${ligneNumero} : La colonne "${colonneNom}" est vide\n` +
-            `• Champ concerné : ${champ}\n\n` +
-            `⚠️ Toutes les cellules critiques doivent être renseignées.\n` +
-            `Veuillez corriger le fichier Excel et réessayer l'import.`
-          );
-        }
-      }
-    }
+    //       throw new BadRequestException(
+    //         `❌ Cellule vide détectée - Upload interrompu\n\n` +
+    //         `• Ligne ${ligneNumero} : La colonne "${colonneNom}" est vide\n` +
+    //         `• Champ concerné : ${champ}\n\n` +
+    //         `⚠️ Toutes les cellules critiques doivent être renseignées.\n` +
+    //         `Veuillez corriger le fichier Excel et réessayer l'import.`
+    //       );
+    //     }
+    //   }
+    // }
 
     // Vérifier et supprimer les données existantes pour ce codeCellule
     const existingData = await this.prisma.tblImportExcelCel.findMany({
@@ -1217,13 +1237,13 @@ export class UploadService {
       this.prisma.tblCel.count({ 
         where: { 
           ...where,
-          etatResultatCellule: { in: ['I', 'P'] } 
+          etatResultatCellule: { in: ['I', 'PUBLISHED'] } 
         } 
       }), // CELs importées ou publiées
       this.prisma.tblCel.count({ 
         where: { 
           ...where,
-          etatResultatCellule: { notIn: ['I', 'P'] } 
+          etatResultatCellule: { notIn: ['I', 'PUBLISHED'] } 
         } 
       }), // CELs en attente
       this.prisma.tblCel.groupBy({
