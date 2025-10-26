@@ -17,11 +17,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           'error',
         ] as Array<Prisma.LogLevel | Prisma.LogDefinition>;
 
+    const url = process.env.DATABASE_URL;
+    
+    // Ajouter les paramètres de pool si nécessaire
+    const enhancedUrl = url && !url.includes('connectionLimit') 
+      ? `${url};connectionLimit=50;poolTimeout=60000` 
+      : url;
+
     super({
       log: logLevels,
       datasources: {
         db: {
-          url: process.env.DATABASE_URL,
+          url: enhancedUrl,
         },
       },
     });
@@ -60,8 +67,21 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    await this.$connect();
-    console.log('🔗 Connexion à la base de données SQL Server établie');
+    try {
+      // Configuration du timeout avant connexion
+      await this.$connect();
+      console.log('🔗 Connexion à la base de données SQL Server établie');
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('pool')) {
+        console.error('⏱️ Timeout de connexion au pool détecté, réessayant...');
+        // Retry après un court délai
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await this.$connect();
+        console.log('🔗 Connexion à la base de données SQL Server établie (retry)');
+      } else {
+        throw error;
+      }
+    }
   }
 
   async onModuleDestroy() {
@@ -72,6 +92,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   // Méthodes utilitaires pour les transactions
   async executeTransaction<T>(fn: (prisma: PrismaClient) => Promise<T>): Promise<T> {
     return this.$transaction(fn);
+  }
+
+  /**
+   * Exécuter une requête avec timeout personnalisé
+   */
+  async withTimeout<T>(promise: Promise<T>, timeoutMs: number = 60000): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), timeoutMs)
+      )
+    ]);
   }
 
   // Méthode pour nettoyer les données de test

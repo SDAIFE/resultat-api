@@ -190,7 +190,7 @@ export class ResultatsService {
       totalInscrits: bureau.inscrits || 0,
       totalVotants: bureau.totalVotants || 0,
       tauxParticipation: bureau.tauxParticipation || 0,
-      totalExprimes: (bureau.totalVotants || 0) - (bureau.bulletinsNuls || 0) - (bureau.bulletinsBlancs || 0),
+      totalExprimes: parseInt(bureau.suffrageExprime || '0') || 0, // Utiliser suffrageExprime directement (somme réelle)
       totalBlancs: bureau.bulletinsBlancs || 0,
       totalNuls: bureau.bulletinsNuls || 0,
       nombreBureaux: 1,
@@ -259,7 +259,7 @@ export class ResultatsService {
       totalVotants: lieuVote.bureauxVote.reduce((sum, bv) => sum + (bv.totalVotants || 0), 0),
       tauxParticipation: 0, // Calculé après
       totalExprimes: lieuVote.bureauxVote.reduce((sum, bv) => 
-        sum + (bv.totalVotants || 0) - (bv.bulletinsNuls || 0) - (bv.bulletinsBlancs || 0), 0),
+        sum + (parseInt(bv.suffrageExprime || '0') || 0), 0), // Utiliser suffrageExprime directement (somme réelle)
       totalBlancs: lieuVote.bureauxVote.reduce((sum, bv) => sum + (bv.bulletinsBlancs || 0), 0),
       totalNuls: lieuVote.bureauxVote.reduce((sum, bv) => sum + (bv.bulletinsNuls || 0), 0),
       nombreBureaux: lieuVote.bureauxVote.length,
@@ -348,6 +348,38 @@ export class ResultatsService {
       }
     });
     
+    // Récupérer suffrageExprime directement depuis la table (somme réelle)
+    let suffrageExprimeData: Array<{ suffrageExprime: bigint | null }>;
+    
+    if (communeId) {
+      suffrageExprimeData = await this.prisma.$queryRaw<Array<{
+        suffrageExprime: bigint | null;
+      }>>`
+        SELECT SUM(CAST(SUF_EXP AS BIGINT)) as suffrageExprime
+        FROM TBL_BV bv
+        WHERE bv.COD_DEPT = ${departement.codeDepartement}
+          AND EXISTS (
+            SELECT 1 FROM TBL_COM c 
+            WHERE c.COD_DEPT = bv.COD_DEPT 
+              AND c.COD_SP = bv.COD_SP 
+              AND c.COD_COM = bv.COD_COM
+              AND c.id = ${communeId}
+          )
+          AND bv.SUF_EXP IS NOT NULL
+          AND bv.SUF_EXP != ''
+      `;
+    } else {
+      suffrageExprimeData = await this.prisma.$queryRaw<Array<{
+        suffrageExprime: bigint | null;
+      }>>`
+        SELECT SUM(CAST(SUF_EXP AS BIGINT)) as suffrageExprime
+        FROM TBL_BV bv
+        WHERE bv.COD_DEPT = ${departement.codeDepartement}
+          AND bv.SUF_EXP IS NOT NULL
+          AND bv.SUF_EXP != ''
+      `;
+    }
+    
     const totalInscrits = bureauxStats._sum.inscrits || 0;
     const totalVotants = bureauxStats._sum.totalVotants || 0;
     const totalBlancs = bureauxStats._sum.bulletinsBlancs || 0;
@@ -371,11 +403,15 @@ export class ResultatsService {
       }
     };
 
+    const totalExprimes = suffrageExprimeData[0]?.suffrageExprime 
+      ? Number(suffrageExprimeData[0].suffrageExprime) || 0 
+      : 0;
+
     const statistics: ZoneStatisticsDto = {
       totalInscrits,
       totalVotants,
       tauxParticipation: totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0,
-      totalExprimes: totalVotants - totalBlancs - totalNuls,
+      totalExprimes,
       totalBlancs,
       totalNuls,
       nombreBureaux,
@@ -444,7 +480,7 @@ export class ResultatsService {
     };
 
     // Agrégation des statistiques de tous les départements
-    let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0;
+    let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0, totalExprimes = 0;
     let nombreBureaux = 0;
     let nombreLieuxVote = 0;
 
@@ -456,6 +492,8 @@ export class ResultatsService {
           totalVotants += bv.totalVotants || 0;
           totalBlancs += bv.bulletinsBlancs || 0;
           totalNuls += bv.bulletinsNuls || 0;
+          // Ajouter suffrageExprime directement (somme réelle au lieu de calculer par soustraction)
+          totalExprimes += parseInt(bv.suffrageExprime || '0') || 0;
           nombreBureaux++;
         });
       });
@@ -465,7 +503,7 @@ export class ResultatsService {
       totalInscrits,
       totalVotants,
       tauxParticipation: totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0,
-      totalExprimes: totalVotants - totalBlancs - totalNuls,
+      totalExprimes,
       totalBlancs,
       totalNuls,
       nombreBureaux,
@@ -531,6 +569,19 @@ export class ResultatsService {
       }
     });
     
+    // Récupérer suffrageExprime directement depuis la table (somme réelle)
+    // Construire la clause IN manuellement
+    const deptPlaceholders = codesDepartements.map(() => '?').join(',');
+    const suffrageExprimeData = await this.prisma.$queryRawUnsafe<Array<{
+      suffrageExprime: bigint | null;
+    }>>(`
+      SELECT SUM(CAST(SUF_EXP AS BIGINT)) as suffrageExprime
+      FROM TBL_BV bv
+      WHERE bv.COD_DEPT IN (${deptPlaceholders})
+        AND bv.SUF_EXP IS NOT NULL
+        AND bv.SUF_EXP != ''
+    `, ...codesDepartements);
+    
     const totalInscrits = bureauxStats._sum.inscrits || 0;
     const totalVotants = bureauxStats._sum.totalVotants || 0;
     const totalBlancs = bureauxStats._sum.bulletinsBlancs || 0;
@@ -554,11 +605,15 @@ export class ResultatsService {
       }
     };
 
+    const totalExprimes = suffrageExprimeData[0]?.suffrageExprime 
+      ? Number(suffrageExprimeData[0].suffrageExprime) || 0 
+      : 0;
+
     const statistics: ZoneStatisticsDto = {
       totalInscrits,
       totalVotants,
       tauxParticipation: totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0,
-      totalExprimes: totalVotants - totalBlancs - totalNuls,
+      totalExprimes,
       totalBlancs,
       totalNuls,
       nombreBureaux,
@@ -1612,6 +1667,18 @@ export class ResultatsService {
       }
     });
 
+    // Récupérer les suffrageExprime directement depuis la table (somme réelle)
+    const suffrageExprimeData = await this.prisma.$queryRaw<Array<{
+      suffrageExprime: bigint | null;
+    }>>`
+      SELECT SUM(CAST(SUF_EXP AS BIGINT)) as suffrageExprime
+      FROM TBL_BV bv
+      INNER JOIN TBL_DEPT d ON d.COD_DEPT = bv.COD_DEPT
+      WHERE d.STAT_PUB IN ('PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS')
+      AND bv.SUF_EXP IS NOT NULL
+      AND bv.SUF_EXP != ''
+    `;
+
     // Utiliser les totaux appropriés
     const inscrits = inscritsTotals._sum.inscrits || 0;
     const inscritsHommes = inscritsTotals._sum.populationHommes || 0;
@@ -1622,7 +1689,10 @@ export class ResultatsService {
     const bulletinsBlancs = resultsTotals._sum.bulletinsBlancs || 0;
     const bulletinsNuls = resultsTotals._sum.bulletinsNuls || 0;
 
-    const suffrageExprime = votants - bulletinsBlancs - bulletinsNuls;
+    // Utiliser la somme réelle du suffrageExprime au lieu de calculer par soustraction
+    const suffrageExprime = suffrageExprimeData[0]?.suffrageExprime 
+      ? Number(suffrageExprimeData[0].suffrageExprime) || 0 
+      : 0;
     const tauxParticipation = inscrits > 0 ? Number(((votants / inscrits) * 100).toFixed(2)) : 0;
 
     return {
@@ -1779,7 +1849,7 @@ export class ResultatsService {
 
     return regions.map(region => {
       // Calculer les totaux de la région
-      let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0;
+      let totalInscrits = 0, totalVotants = 0, totalBlancs = 0, totalNuls = 0, totalExprimes = 0;
       
       region.departements.forEach(dept => {
         dept.lieuxVote.forEach(lv => {
@@ -1788,19 +1858,21 @@ export class ResultatsService {
             totalVotants += bv.totalVotants || 0;
             totalBlancs += bv.bulletinsBlancs || 0;
             totalNuls += bv.bulletinsNuls || 0;
+            // Ajouter suffrageExprime directement (somme réelle au lieu de calculer par soustraction)
+            totalExprimes += parseInt(bv.suffrageExprime || '0') || 0;
           });
         });
       });
 
-      const suffrageExprime = totalVotants - totalBlancs - totalNuls;
+      const suffrageExprime = totalExprimes;
       const tauxParticipation = totalInscrits > 0 ? Number(((totalVotants / totalInscrits) * 100).toFixed(2)) : 0;
 
       return {
         id: region.id,
         nom: region.libelleRegion,
-        departements: region.departements.map(dept => {
+          departements: region.departements.map(dept => {
           // Calculer les totaux du département
-          let deptInscrits = 0, deptVotants = 0, deptBlancs = 0, deptNuls = 0;
+          let deptInscrits = 0, deptVotants = 0, deptBlancs = 0, deptNuls = 0, deptExprimes = 0;
           
           dept.lieuxVote.forEach(lv => {
             lv.bureauxVote.forEach(bv => {
@@ -1808,10 +1880,12 @@ export class ResultatsService {
               deptVotants += bv.totalVotants || 0;
               deptBlancs += bv.bulletinsBlancs || 0;
               deptNuls += bv.bulletinsNuls || 0;
+              // Ajouter suffrageExprime directement (somme réelle au lieu de calculer par soustraction)
+              deptExprimes += parseInt(bv.suffrageExprime || '0') || 0;
             });
           });
 
-          const deptSuffrageExprime = deptVotants - deptBlancs - deptNuls;
+          const deptSuffrageExprime = deptExprimes;
           const deptTauxParticipation = deptInscrits > 0 ? Number(((deptVotants / deptInscrits) * 100).toFixed(2)) : 0;
 
           return {
@@ -1834,16 +1908,18 @@ export class ResultatsService {
             },
             lieuxVote: dept.lieuxVote.map(lv => {
               // Calculer les totaux du lieu de vote
-              let lvInscrits = 0, lvVotants = 0, lvBlancs = 0, lvNuls = 0;
+              let lvInscrits = 0, lvVotants = 0, lvBlancs = 0, lvNuls = 0, lvExprimes = 0;
               
               lv.bureauxVote.forEach(bv => {
                 lvInscrits += bv.inscrits || 0;
                 lvVotants += bv.totalVotants || 0;
                 lvBlancs += bv.bulletinsBlancs || 0;
                 lvNuls += bv.bulletinsNuls || 0;
+                // Ajouter suffrageExprime directement (somme réelle au lieu de calculer par soustraction)
+                lvExprimes += parseInt(bv.suffrageExprime || '0') || 0;
               });
 
-              const lvSuffrageExprime = lvVotants - lvBlancs - lvNuls;
+              const lvSuffrageExprime = lvExprimes;
               const lvTauxParticipation = lvInscrits > 0 ? Number(((lvVotants / lvInscrits) * 100).toFixed(2)) : 0;
 
               return {
@@ -1875,7 +1951,7 @@ export class ResultatsService {
                   votants: bv.totalVotants || 0,
                   votantsHommes: 0,
                   votantsFemmes: 0,
-                  exprimes: (bv.totalVotants || 0) - (bv.bulletinsBlancs || 0) - (bv.bulletinsNuls || 0),
+                  exprimes: parseInt(bv.suffrageExprime || '0') || 0, // Utiliser suffrageExprime directement (somme réelle)
                   blancs: bv.bulletinsBlancs || 0,
                   nuls: bv.bulletinsNuls || 0,
                   tauxParticipation: (bv.inscrits || 0) > 0 ? Number((((bv.totalVotants || 0) / (bv.inscrits || 1)) * 100).toFixed(2)) : 0,
