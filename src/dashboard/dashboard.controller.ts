@@ -240,11 +240,8 @@ export class DashboardController {
   @Get('user-metrics')
   @Roles('USER')
   async getUserMetrics(@CurrentUser() user: any): Promise<any> {
-    this.logger.log(`🔍 [DashboardController] Récupération métriques USER pour: ${user.email} (ID: ${user.id})`);
-    
     try {
       const data = await this.dashboardService.getUserDashboardStats(user.id);
-      this.logger.log(`📊 [DashboardController] Métriques USER récupérées: ${JSON.stringify(data)}`);
       
       return {
         success: true,

@@ -47,7 +47,8 @@ export class DashboardService {
       this.prisma.tblCel.count({
         where: { 
           ...celWhereClause,
-          etatResultatCellule: 'I',
+          // etatResultatCellule = 'I' ou 'PUBLISHED'
+          etatResultatCellule: { in: ['I', 'PUBLISHED'] },
         },
       }),
       this.prisma.tblCel.groupBy({
@@ -138,7 +139,7 @@ export class DashboardService {
     // 1. Statistiques générales des CELs (toutes les CELs)
     const [totalCels, celsAvecImport, celsParStatut] = await Promise.all([
       this.prisma.tblCel.count(),
-      this.prisma.tblCel.count({ where: { etatResultatCellule: 'I' } }),
+      this.prisma.tblCel.count({ where: { etatResultatCellule: { in: ['I', 'PUBLISHED'] } } }),
       this.prisma.tblCel.groupBy({
         by: ['etatResultatCellule'],
         _count: { etatResultatCellule: true },
@@ -227,7 +228,7 @@ export class DashboardService {
 
         const celsAvecImportDept = await this.prisma.tblCel.count({
           where: {
-            etatResultatCellule: 'I',
+            etatResultatCellule: { in: ['I', 'PUBLISHED'] },
             lieuxVote: {
               some: {
                 codeDepartement: dept.codeDepartement,
