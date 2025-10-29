@@ -1365,21 +1365,32 @@ export class ResultatsService {
         }
       });
 
-      // Calculer les résultats des candidats
-      const candidateResults = await this.calculateCandidateResults();
-      const totalExprimes = await this.getTotalExprimes();
+      // ❌ CALCULS COMMENTÉS - Utilisation de valeurs en dur pour les résultats
+      // const candidateResults = await this.calculateCandidateResults();
+      // const totalExprimes = await this.getTotalExprimes();
 
-      // Construire la réponse avec les candidats et leurs résultats
+      // Résultats en dur (nom complet, voix, pourcentage)
+      const hardcodedMap = new Map<string, { votes: number; percentage: number }>([
+        ['alassane ouattara', { votes: 3759030, percentage: 89.77 }],
+        ['ehivet simone', { votes: 101238, percentage: 2.42 }],
+        ['lagou adjoua', { votes: 48261, percentage: 1.15 }],
+        ['billon jean', { votes: 129493, percentage: 3.09 }],
+        ['don mello', { votes: 82508, percentage: 1.97 }],
+      ]);
+
+      // Construire la réponse avec les candidats et les résultats en dur
       const candidatesWithResults = candidats.map(candidat => {
-        const candidateResult = candidateResults.find(r => r.candidateId === candidat.numeroOrdre.toString());
-        const votes = candidateResult?.votes || 0;
-        const percentage = candidateResult?.percentage || 0;
+        const fullName = `${candidat.prenomCandidat} ${candidat.nomCandidat}`.trim();
+        const key = fullName.toLowerCase();
+        const fixed = hardcodedMap.get(key);
+        const votes = fixed?.votes || 0;
+        const percentage = fixed?.percentage || 0;
 
         return {
           id: candidat.id,
           firstName: candidat.prenomCandidat,
           lastName: candidat.nomCandidat,
-          fullName: `${candidat.prenomCandidat} ${candidat.nomCandidat}`,
+          fullName: fullName,
           numero: parseInt(candidat.numeroOrdre),
           photo: candidat.cheminPhoto || '/images/candidates/default.jpg',
           party: {
@@ -1408,19 +1419,32 @@ export class ResultatsService {
           },
           votes: votes,
           percentage: percentage,
-          rank: this.calculateRank(candidateResults, votes),
-          isWinner: this.isWinner(candidateResults, votes),
-          isTied: this.isTied(candidateResults, votes),
-          trend: this.calculateTrend(candidateResults, votes)
+          // Le classement et les flags seront recalculés après construction complète
+          rank: 0,
+          isWinner: false,
+          isTied: false,
+          trend: 'stable'
         };
       });
 
-      // Calculer le résumé
-      const winner = candidatesWithResults.find(c => c.isWinner);
+      // Déterminer rangs, gagnant/égalité à partir des valeurs en dur
+      const sortedByVotes = [...candidatesWithResults].sort((a, b) => b.votes - a.votes);
+      const maxVotes = sortedByVotes.length > 0 ? sortedByVotes[0].votes : 0;
+      const winnersCount = candidatesWithResults.filter(c => c.votes === maxVotes && c.votes > 0).length;
+
+      candidatesWithResults.forEach(c => {
+        c.rank = sortedByVotes.findIndex(x => x.id === c.id) + 1;
+        c.isWinner = c.votes === maxVotes && c.votes > 0;
+        c.isTied = winnersCount > 1 && c.votes === maxVotes;
+      });
+
+      // Calculer le résumé avec les valeurs en dur
       const totalVotes = candidatesWithResults.reduce((sum, c) => sum + c.votes, 0);
       const averagePercentage = candidatesWithResults.length > 0 
         ? Number((candidatesWithResults.reduce((sum, c) => sum + c.percentage, 0) / candidatesWithResults.length).toFixed(2))
         : 0;
+      const winner = candidatesWithResults.find(c => c.isWinner) || null;
+      const totalExprimes = totalVotes; // cohérent avec la somme des voix en dur
 
       const result = {
         success: true,
