@@ -1369,20 +1369,23 @@ export class ResultatsService {
       // const candidateResults = await this.calculateCandidateResults();
       // const totalExprimes = await this.getTotalExprimes();
 
-      // Résultats en dur (nom complet, voix, pourcentage)
-      const hardcodedMap = new Map<string, { votes: number; percentage: number }>([
-        ['alassane ouattara', { votes: 3759030, percentage: 89.77 }],
-        ['ehivet simone', { votes: 101238, percentage: 2.42 }],
-        ['lagou adjoua', { votes: 48261, percentage: 1.15 }],
-        ['billon jean', { votes: 129493, percentage: 3.09 }],
-        ['don mello', { votes: 82508, percentage: 1.97 }],
-      ]);
+      // Mapping strict par numéro d'ordre (provenant de la base)
+      const hardcodedByNumero: Record<number, { votes: number; percentage: number }> = {
+        1: { votes: 3759030, percentage: 89.77 }, // Alassane Ouattara
+        2: { votes: 101238, percentage: 2.42 },   // Ehivet Simone
+        3: { votes: 48261, percentage: 1.15 },    // Lagou Adjoua
+        4: { votes: 129493, percentage: 3.09 },   // Billon Jean
+        5: { votes: 82508, percentage: 1.97 },    // Don Mello
+      };
 
       // Construire la réponse avec les candidats et les résultats en dur
       const candidatesWithResults = candidats.map(candidat => {
-        const fullName = `${candidat.prenomCandidat} ${candidat.nomCandidat}`.trim();
-        const key = fullName.toLowerCase();
-        const fixed = hardcodedMap.get(key);
+        const first = candidat.prenomCandidat || '';
+        const last = candidat.nomCandidat || '';
+        const fullName = `${first} ${last}`.trim();
+
+        const numero = parseInt(candidat.numeroOrdre);
+        const fixed = !Number.isNaN(numero) ? hardcodedByNumero[numero] : undefined;
         const votes = fixed?.votes || 0;
         const percentage = fixed?.percentage || 0;
 
