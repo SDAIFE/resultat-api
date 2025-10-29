@@ -927,11 +927,17 @@ export class ResultatsService {
         return cachedResult;
       }
 
-      // Calculer les totaux nationaux
-      const totals = await this.calculateNationalTotals();
+      // ❌ CALCUL DES TOTAUX COMMENTÉ - Valeurs mises en dur
+      // const totals = await this.calculateNationalTotals();
       
       // Récupérer les départements publiés
       const departementsPublies = await this.getPublishedDepartements();
+
+      // Valeurs mises en dur pour les métriques
+      const inscrits = 8568456;
+      const votants = 4292474;
+      const tauxParticipation = 50.10;
+      const suffrageExprime = 4187318;
 
       const headerData: ElectionHeaderDto = {
         id: electionId,
@@ -941,14 +947,14 @@ export class ResultatsService {
         tour: 1,
         status: 'preliminaires',
         lastUpdate: new Date().toISOString(),
-        inscrits: totals.inscrits,
-        inscritsHommes: totals.inscritsHommes,
-        inscritsFemmes: totals.inscritsFemmes,
-        votants: totals.votants,
-        votantsHommes: totals.votantsHommes,
-        votantsFemmes: totals.votantsFemmes,
-        tauxParticipation: totals.tauxParticipation,
-        suffrageExprime: totals.suffrageExprime,
+        inscrits: inscrits, // Valeur mise en dur : 8 568 456
+        inscritsHommes: 0, // Non disponible (calcul commenté)
+        inscritsFemmes: 0, // Non disponible (calcul commenté)
+        votants: votants, // Valeur mise en dur : 4 292 474
+        votantsHommes: 0, // Non disponible (calcul commenté)
+        votantsFemmes: 0, // Non disponible (calcul commenté)
+        tauxParticipation: tauxParticipation, // Valeur mise en dur : 50,10%
+        suffrageExprime: suffrageExprime, // Valeur mise en dur : 4 187 318
         departementsPublies: departementsPublies
       };
 
