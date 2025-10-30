@@ -140,7 +140,7 @@ export class ResultsByZoneDto {
   @IsString()
   electionId: string;
 
-  @ApiProperty({ description: 'Nom de l\'élection', example: 'Élection Présidentielle 2025 - Premier Tour' })
+  @ApiProperty({ description: 'Nom de l\'élection', example: 'Élection Présidentielle 2025 - Résultats provisoires' })
   @IsString()
   electionName: string;
 

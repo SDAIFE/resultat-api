@@ -100,7 +100,7 @@ export class ResultatsService {
 
       const resultsByZoneData: ResultsByZoneDto = {
         electionId: electionId,
-        electionName: 'Élection Présidentielle 2025 - Premier Tour',
+        electionName: 'Élection Présidentielle 2025 - Résultats provisoires',
         zoneInfo,
         statistics,
         results,
@@ -941,7 +941,7 @@ export class ResultatsService {
 
       const headerData: ElectionHeaderDto = {
         id: electionId,
-        nom: 'Élection Présidentielle 2025 - Premier Tour',
+        nom: 'Élection Présidentielle 2025 - Résultats provisoires',
         date: '2025-10-25',
         type: 'presidential',
         tour: 1,
@@ -1074,7 +1074,7 @@ export class ResultatsService {
         success: true,
         data: {
           id: electionId,
-          nom: 'Élection Présidentielle 2025 - Premier Tour',
+          nom: 'Élection Présidentielle 2025 - Résultats provisoires',
           date: '2025-10-25T00:00:00Z',
           type: 'presidential',
           tour: 1,
@@ -1328,7 +1328,7 @@ export class ResultatsService {
         success: true,
         data: {
           electionId: electionId,
-          electionName: 'Élection Présidentielle 2025 - Premier Tour',
+          electionName: 'Élection Présidentielle 2025 - Résultats provisoires',
           regions: regions
         },
         message: 'Zones avec résultats publiés récupérées avec succès',
@@ -1453,7 +1453,7 @@ export class ResultatsService {
         success: true,
         data: {
           electionId: electionId,
-          electionName: 'Élection Présidentielle 2025 - Premier Tour',
+          electionName: 'Élection Présidentielle 2025 - Résultats provisoires',
           totalCandidates: candidats.length,
           totalExprimes: totalExprimes,
           candidates: candidatesWithResults,
