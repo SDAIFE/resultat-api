@@ -116,7 +116,6 @@ export class ResultatsService {
 
       // Mise en cache du résultat (TTL de 2 minutes)
       this.cacheService.set(cacheKey, result, 120);
-
       return result;
 
     } catch (error) {
@@ -642,14 +641,16 @@ export class ResultatsService {
       }
     });
 
+
     // Calculer les résultats spécifiques à la zone
     const zoneResults = await this.calculateCandidateResultsForSpecificZone(zoneData);
 
-    return candidats.map(candidat => {
-      const candidateResult = zoneResults.find(r => r.candidateId === candidat.numeroOrdre.toString());
+    const mapped = candidats.map(candidat => {
+      const numeroOrdreStr = candidat.numeroOrdre.toString();
+      const candidateResult = zoneResults.find(r => r.candidateId === numeroOrdreStr);
       const votes = candidateResult?.votes || 0;
       const percentage = candidateResult?.percentage || 0;
-
+      
       return {
         candidateId: candidat.id,
         candidateName: `${candidat.prenomCandidat} ${candidat.nomCandidat}`,
@@ -668,12 +669,17 @@ export class ResultatsService {
         isTied: this.isTied(zoneResults, votes)
       };
     });
+
+    return mapped;
   }
 
   /**
    * Calculer les résultats des candidats pour une zone spécifique
    */
   private async calculateCandidateResultsForSpecificZone(zoneData: any[]): Promise<ResultDto[]> {
+
+    console.log('🔍 Zone Data:', zoneData);
+
     if (!zoneData || zoneData.length === 0) {
       // Si aucune donnée de zone spécifique, retourner les résultats globaux
       return await this.calculateCandidateResults();
@@ -762,83 +768,348 @@ export class ResultatsService {
       };
     }
 
-    // Récupérer les bureaux de vote correspondants avec leurs relations
-    const bureauxVote = await this.prisma.tblBv.findMany({
-      where: whereCondition,
-      include: {
-        departement: {
-          include: {
-            region: true
-          }
-        },
-        lieuVote: {
-          include: {
-            cellule: true
-          }
-        },
-        commune: true
-      }
-    });
+    // Pour déterminer le code département, on doit identifier le type de zone
+    let codeDepartement: string | null = null;
+    let codesCel: string[] = [];
 
-    console.log('📊 Nombre de bureaux de vote trouvés:', bureauxVote.length);
-
-    if (bureauxVote.length === 0) {
-      // Aucun bureau trouvé, retourner des résultats vides
-      console.log('❌ Aucun bureau de vote trouvé avec les critères de filtrage');
-      return [];
-    }
-
-    // Calculer les totaux pour chaque candidat
-    // Pour chaque bureau, récupérer UNIQUEMENT l'enregistrement CEL correct
-    let totalScore1 = 0, totalScore2 = 0, totalScore3 = 0, totalScore4 = 0, totalScore5 = 0;
-
-    for (const bureau of bureauxVote) {
-      const codeCellule = bureau.lieuVote?.cellule?.codeCellule;
+    if (zoneData.some(item => item.type === 'department')) {
+      // Pour un département : faire directement la requête d'agrégation avec jointure
+      // au lieu de passer par la vue pour éviter les problèmes de correspondance
+      const deptIds = zoneData
+        .filter(item => item.type === 'department')
+        .map(item => item.id);
       
-      if (!codeCellule) {
-        continue;
+      const communeIds = zoneData
+        .filter(item => item.type === 'department' && item.communeId)
+        .map(item => item.communeId);
+      
+      // Récupérer le code département
+      const departements = await this.prisma.tblDept.findMany({
+        where: {
+          id: { in: deptIds },
+          statutPublication: {
+            in: ['PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS']
+          }
+        },
+        select: { codeDepartement: true }
+      });
+
+      if (departements.length === 0) {
+        console.log('❌ Aucun département publié trouvé');
+        return [];
       }
 
-      // Récupérer tous les enregistrements CEL pour ce code cellule et ce numéro de bureau
-      const celRecords = await this.prisma.tblImportExcelCel.findMany({
-        where: {
-          codeCellule: codeCellule,
-          numeroBureauVote: bureau.numeroBureauVote
-        },
-        orderBy: {
-          dateImport: 'desc' // Plus récent en premier
+      const codeDepartements = departements.map(d => d.codeDepartement);
+      const deptPlaceholders = codeDepartements.map(d => `'${d.replace(/'/g, "''")}'`).join(',');
+      
+      // Construire le filtre de commune si nécessaire (pour la vue)
+      let communeViewFilter = '';
+      if (communeIds.length > 0) {
+        const communes = await this.prisma.tblCom.findMany({
+          where: { id: { in: communeIds } },
+          select: { codeCommune: true, codeSousPrefecture: true, codeDepartement: true }
+        });
+        
+        if (communes.length > 0) {
+          const communeCodes = communes.map(c => `'${c.codeCommune.replace(/'/g, "''")}'`).join(',');
+          communeViewFilter = ` AND COD_COM IN (${communeCodes})`;
+        }
+      }
+
+      // Récupérer les codes CEL depuis la vue View_Liste_Cel_Par_Departement
+      // puis faire la requête directement sur TBL_IMPORT_EXCEL_CEL avec ces codes
+      // Exactement comme votre requête SQL : on récupère les COD_CEL, puis on fait SUM sur TBL_IMPORT_EXCEL_CEL
+      interface ViewCelRow {
+        COD_CEL: string;
+      }
+      
+      const celRows = await this.prisma.$queryRawUnsafe<ViewCelRow[]>(`
+        SELECT DISTINCT COD_CEL
+        FROM View_Liste_Cel_Par_Departement
+        WHERE COD_DEPT IN (${deptPlaceholders})${communeViewFilter}
+      `);
+
+      const codesCel = celRows.map(row => row.COD_CEL).filter(c => c);
+
+      if (codesCel.length === 0) {
+        console.log(`❌ Aucun code cellule trouvé pour le(s) département(s) ${codeDepartements.join(', ')}`);
+        return [];
+      }
+
+      // Faire directement la requête d'agrégation sur TBL_IMPORT_EXCEL_CEL avec les codes CEL récupérés
+      // Exactement comme votre requête SQL de référence (SANS déduplication)
+      const celValues = codesCel.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+
+      // Faire directement la requête d'agrégation SANS déduplication
+      // Votre requête SQL de référence fait juste SUM sans déduplication, donc on fait pareil
+      const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
+        totalScore1: bigint | null;
+        totalScore2: bigint | null;
+        totalScore3: bigint | null;
+        totalScore4: bigint | null;
+        totalScore5: bigint | null;
+      }>>(`
+        SELECT 
+          SUM(CAST(SCORE_1 AS BIGINT)) as totalScore1,
+          SUM(CAST(SCORE_2 AS BIGINT)) as totalScore2,
+          SUM(CAST(SCORE_3 AS BIGINT)) as totalScore3,
+          SUM(CAST(SCORE_4 AS BIGINT)) as totalScore4,
+          SUM(CAST(SCORE_5 AS BIGINT)) as totalScore5
+        FROM TBL_IMPORT_EXCEL_CEL
+        WHERE COD_CEL IN (${celValues})
+          AND SCORE_1 IS NOT NULL 
+          AND SCORE_1 != ''
+      `);
+
+      const totalScore1 = aggregatedScores[0]?.totalScore1 ? Number(aggregatedScores[0].totalScore1) : 0;
+      const totalScore2 = aggregatedScores[0]?.totalScore2 ? Number(aggregatedScores[0].totalScore2) : 0;
+      const totalScore3 = aggregatedScores[0]?.totalScore3 ? Number(aggregatedScores[0].totalScore3) : 0;
+      const totalScore4 = aggregatedScores[0]?.totalScore4 ? Number(aggregatedScores[0].totalScore4) : 0;
+      const totalScore5 = aggregatedScores[0]?.totalScore5 ? Number(aggregatedScores[0].totalScore5) : 0;
+
+      const totalExprimes = totalScore1 + totalScore2 + totalScore3 + totalScore4 + totalScore5;
+      const results: ResultDto[] = [];
+
+      // Toujours retourner les 5 candidats, même avec 0 voix
+      results.push({
+        candidateId: '1',
+        votes: totalScore1,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore1 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '2',
+        votes: totalScore2,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore2 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '3',
+        votes: totalScore3,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore3 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '4',
+        votes: totalScore4,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore4 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '5',
+        votes: totalScore5,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore5 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      return results;
+    } else if (zoneData.some(item => item.type === 'votingPlace')) {
+      // Pour un lieu de vote : récupérer les bureaux et extraire les codes CEL
+      const lieuVoteIds = zoneData
+        .filter(item => item.type === 'votingPlace')
+        .map(item => item.id);
+      
+      const lieuxVote = await this.prisma.tblLv.findMany({
+        where: { id: { in: lieuVoteIds } },
+        select: { codeCellule: true }
+      });
+
+      codesCel = lieuxVote.map(lv => lv.codeCellule).filter((c): c is string => Boolean(c));
+    } else if (zoneData.some(item => item.type === 'pollingStation')) {
+      // Pour un bureau de vote : récupérer le code CEL du lieu de vote
+      const bureauIds = zoneData
+        .filter(item => item.type === 'pollingStation')
+        .map(item => item.id);
+      
+      const bureaux = await this.prisma.tblBv.findMany({
+        where: { id: { in: bureauIds } },
+        include: {
+          lieuVote: {
+            select: { codeCellule: true }
+          }
         }
       });
 
-      if (celRecords.length === 0) {
-        continue;
-      }
-
-      // Sélectionner l'enregistrement le plus pertinent
-      // Priorité 1 : Celui dont totalVotants correspond aux votants du bureau
-      // Priorité 2 : Le plus récent avec statut COMPLETED
-      let selectedRecord = celRecords.find(record => {
-        const votantsRecord = parseInt(record.totalVotants || '0') || 0;
-        return votantsRecord === (bureau.totalVotants || 0);
+      codesCel = bureaux
+        .map(b => b.lieuVote?.codeCellule)
+        .filter((c): c is string => Boolean(c));
+    } else if (zoneData.some(item => item.type === 'region')) {
+      // Pour une région : faire directement la requête d'agrégation avec jointure
+      const regionIds = zoneData
+        .filter(item => item.type === 'region')
+        .map(item => item.id);
+      
+      // Récupérer les codes région
+      const regions = await this.prisma.tblReg.findMany({
+        where: { id: { in: regionIds } },
+        select: { codeRegion: true }
       });
 
-      if (!selectedRecord) {
-        // Si aucun ne correspond par totalVotants, prendre le plus récent avec statut COMPLETED
-        selectedRecord = celRecords.find(r => r.statutImport === 'COMPLETED');
+      if (regions.length === 0) {
+        return [];
       }
 
-      if (!selectedRecord) {
-        // Si toujours rien, prendre le premier (plus récent)
-        selectedRecord = celRecords[0];
-      }
+      const codeRegions = regions.map(r => r.codeRegion);
+      const regionPlaceholders = codeRegions.map(r => `'${r.replace(/'/g, "''")}'`).join(',');
 
-      // Ajouter les scores de cet enregistrement
-      totalScore1 += parseInt(selectedRecord.score1 || '0') || 0;
-      totalScore2 += parseInt(selectedRecord.score2 || '0') || 0;
-      totalScore3 += parseInt(selectedRecord.score3 || '0') || 0;
-      totalScore4 += parseInt(selectedRecord.score4 || '0') || 0;
-      totalScore5 += parseInt(selectedRecord.score5 || '0') || 0;
+      // Faire directement la requête d'agrégation avec jointure TBL_LV, TBL_DEPT et TBL_REG
+      const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
+        totalScore1: bigint | null;
+        totalScore2: bigint | null;
+        totalScore3: bigint | null;
+        totalScore4: bigint | null;
+        totalScore5: bigint | null;
+      }>>(`
+        WITH LatestRecords AS (
+          SELECT 
+            iec.COD_CEL,
+            iec.NUMERO_BV,
+            iec.SCORE_1,
+            iec.SCORE_2,
+            iec.SCORE_3,
+            iec.SCORE_4,
+            iec.SCORE_5,
+            ROW_NUMBER() OVER (
+              PARTITION BY iec.COD_CEL, iec.NUMERO_BV 
+              ORDER BY iec.DATE_IMPORT DESC, 
+                CASE WHEN iec.STATUT_IMPORT = 'COMPLETED' THEN 0 ELSE 1 END
+            ) as rn
+          FROM TBL_IMPORT_EXCEL_CEL iec
+          INNER JOIN TBL_LV lv ON lv.COD_CEL = iec.COD_CEL
+          INNER JOIN TBL_DEPT d ON d.COD_DEPT = lv.COD_DEPT
+          WHERE d.COD_REG IN (${regionPlaceholders})
+            AND d.STAT_PUB IN ('PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS')
+            AND iec.SCORE_1 IS NOT NULL 
+            AND iec.SCORE_1 != ''
+        )
+        SELECT 
+          SUM(CAST(SCORE_1 AS BIGINT)) as totalScore1,
+          SUM(CAST(SCORE_2 AS BIGINT)) as totalScore2,
+          SUM(CAST(SCORE_3 AS BIGINT)) as totalScore3,
+          SUM(CAST(SCORE_4 AS BIGINT)) as totalScore4,
+          SUM(CAST(SCORE_5 AS BIGINT)) as totalScore5
+        FROM LatestRecords
+        WHERE rn = 1
+      `);
+
+      const totalScore1 = aggregatedScores[0]?.totalScore1 ? Number(aggregatedScores[0].totalScore1) : 0;
+      const totalScore2 = aggregatedScores[0]?.totalScore2 ? Number(aggregatedScores[0].totalScore2) : 0;
+      const totalScore3 = aggregatedScores[0]?.totalScore3 ? Number(aggregatedScores[0].totalScore3) : 0;
+      const totalScore4 = aggregatedScores[0]?.totalScore4 ? Number(aggregatedScores[0].totalScore4) : 0;
+      const totalScore5 = aggregatedScores[0]?.totalScore5 ? Number(aggregatedScores[0].totalScore5) : 0;
+
+      const totalExprimes = totalScore1 + totalScore2 + totalScore3 + totalScore4 + totalScore5;
+      const results: ResultDto[] = [];
+
+      results.push({
+        candidateId: '1',
+        votes: totalScore1,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore1 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '2',
+        votes: totalScore2,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore2 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '3',
+        votes: totalScore3,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore3 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '4',
+        votes: totalScore4,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore4 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '5',
+        votes: totalScore5,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore5 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      return results;
     }
+
+    console.log('🔍 Codes CEL:', codesCel);
+
+    if (codesCel.length === 0) {
+      console.log('❌ Aucun code cellule trouvé pour la zone');
+      return [];
+    }
+
+    // Utiliser une requête SQL directe pour agrégation (comme votre requête SQL)
+    // Cette méthode est plus fiable que la boucle car elle évite les problèmes de sélection d'enregistrement
+    // On va récupérer le dernier enregistrement par (COD_CEL, NUMERO_BV) pour éviter les doublons
+    // Pour SQL Server, utiliser $queryRawUnsafe avec les valeurs échappées
+    const celValues = codesCel.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+    console.log('🔍 Codes CEL à agréger:', celValues);
+
+    const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
+      totalScore1: bigint | null;
+      totalScore2: bigint | null;
+      totalScore3: bigint | null;
+      totalScore4: bigint | null;
+      totalScore5: bigint | null;
+    }>>(`
+      WITH LatestRecords AS (
+        SELECT 
+          COD_CEL,
+          NUMERO_BV,
+          SCORE_1,
+          SCORE_2,
+          SCORE_3,
+          SCORE_4,
+          SCORE_5,
+          ROW_NUMBER() OVER (
+            PARTITION BY COD_CEL, NUMERO_BV 
+            ORDER BY DATE_IMPORT DESC, 
+              CASE WHEN STATUT_IMPORT = 'COMPLETED' THEN 0 ELSE 1 END
+          ) as rn
+        FROM TBL_IMPORT_EXCEL_CEL
+        WHERE COD_CEL IN (${celValues})
+          AND SCORE_1 IS NOT NULL 
+          AND SCORE_1 != ''
+      )
+      SELECT 
+        SUM(CAST(SCORE_1 AS INT)) as totalScore1,
+        SUM(CAST(SCORE_2 AS INT)) as totalScore2,
+        SUM(CAST(SCORE_3 AS INT)) as totalScore3,
+        SUM(CAST(SCORE_4 AS INT)) as totalScore4,
+        SUM(CAST(SCORE_5 AS INT)) as totalScore5
+      FROM LatestRecords
+      WHERE rn = 1
+    `);
+
+    console.log('🔍 Aggregated Scores:', aggregatedScores);
+
+    const totalScore1 = aggregatedScores[0]?.totalScore1 ? Number(aggregatedScores[0].totalScore1) : 0;
+    const totalScore2 = aggregatedScores[0]?.totalScore2 ? Number(aggregatedScores[0].totalScore2) : 0;
+    const totalScore3 = aggregatedScores[0]?.totalScore3 ? Number(aggregatedScores[0].totalScore3) : 0;
+    const totalScore4 = aggregatedScores[0]?.totalScore4 ? Number(aggregatedScores[0].totalScore4) : 0;
+    const totalScore5 = aggregatedScores[0]?.totalScore5 ? Number(aggregatedScores[0].totalScore5) : 0;
 
     const totalExprimes = totalScore1 + totalScore2 + totalScore3 + totalScore4 + totalScore5;
     const results: ResultDto[] = [];
@@ -883,7 +1154,7 @@ export class ResultatsService {
         ? Number(((totalScore5 / totalExprimes) * 100).toFixed(2))
         : 0
     });
-
+    
     return results;
   }
 
