@@ -1053,8 +1053,6 @@ export class ResultatsService {
       return results;
     }
 
-    console.log('🔍 Codes CEL:', codesCel);
-
     if (codesCel.length === 0) {
       console.log('❌ Aucun code cellule trouvé pour la zone');
       return [];
@@ -1065,7 +1063,6 @@ export class ResultatsService {
     // On va récupérer le dernier enregistrement par (COD_CEL, NUMERO_BV) pour éviter les doublons
     // Pour SQL Server, utiliser $queryRawUnsafe avec les valeurs échappées
     const celValues = codesCel.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
-    console.log('🔍 Codes CEL à agréger:', celValues);
 
     const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
       totalScore1: bigint | null;
