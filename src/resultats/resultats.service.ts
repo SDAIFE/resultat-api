@@ -913,35 +913,219 @@ export class ResultatsService {
       
       return results;
     } else if (zoneData.some(item => item.type === 'votingPlace')) {
-      // Pour un lieu de vote : récupérer les bureaux et extraire les codes CEL
+      // Pour un lieu de vote : récupérer le code CEL et REF_LV, puis faire la requête directe
       const lieuVoteIds = zoneData
         .filter(item => item.type === 'votingPlace')
         .map(item => item.id);
       
       const lieuxVote = await this.prisma.tblLv.findMany({
         where: { id: { in: lieuVoteIds } },
-        select: { codeCellule: true }
+        select: { 
+          codeCellule: true,
+          codeDepartement: true,
+          codeSousPrefecture: true,
+          codeCommune: true,
+          codeLieuVote: true
+        }
       });
 
-      codesCel = lieuxVote.map(lv => lv.codeCellule).filter((c): c is string => Boolean(c));
+      if (lieuxVote.length === 0) {
+        return [];
+      }
+
+      // Construire REF_LV pour chaque lieu de vote : codeDepartement + codeSousPrefecture + codeCommune + codeLieuVote
+      const refLvList = lieuxVote.map(lv => {
+        const refLv = `${lv.codeDepartement}${lv.codeSousPrefecture}${lv.codeCommune}${lv.codeLieuVote}`;
+        return refLv;
+      }).filter((ref): ref is string => Boolean(ref));
+
+      if (refLvList.length === 0) {
+        return [];
+      }
+
+      // Faire directement la requête d'agrégation SANS déduplication, filtrée par REF_LV
+      const refLvValues = refLvList.map(ref => `'${ref.replace(/'/g, "''")}'`).join(',');
+      const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
+        totalScore1: bigint | null;
+        totalScore2: bigint | null;
+        totalScore3: bigint | null;
+        totalScore4: bigint | null;
+        totalScore5: bigint | null;
+      }>>(`
+        SELECT 
+          SUM(CAST(SCORE_1 AS BIGINT)) as totalScore1,
+          SUM(CAST(SCORE_2 AS BIGINT)) as totalScore2,
+          SUM(CAST(SCORE_3 AS BIGINT)) as totalScore3,
+          SUM(CAST(SCORE_4 AS BIGINT)) as totalScore4,
+          SUM(CAST(SCORE_5 AS BIGINT)) as totalScore5
+        FROM TBL_IMPORT_EXCEL_CEL
+        WHERE REF_LV IN (${refLvValues})
+          AND SCORE_1 IS NOT NULL 
+          AND SCORE_1 != ''
+      `);
+
+      const totalScore1 = aggregatedScores[0]?.totalScore1 ? Number(aggregatedScores[0].totalScore1) : 0;
+      const totalScore2 = aggregatedScores[0]?.totalScore2 ? Number(aggregatedScores[0].totalScore2) : 0;
+      const totalScore3 = aggregatedScores[0]?.totalScore3 ? Number(aggregatedScores[0].totalScore3) : 0;
+      const totalScore4 = aggregatedScores[0]?.totalScore4 ? Number(aggregatedScores[0].totalScore4) : 0;
+      const totalScore5 = aggregatedScores[0]?.totalScore5 ? Number(aggregatedScores[0].totalScore5) : 0;
+
+      const totalExprimes = totalScore1 + totalScore2 + totalScore3 + totalScore4 + totalScore5;
+      const results: ResultDto[] = [];
+
+      results.push({
+        candidateId: '1',
+        votes: totalScore1,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore1 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '2',
+        votes: totalScore2,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore2 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '3',
+        votes: totalScore3,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore3 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '4',
+        votes: totalScore4,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore4 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '5',
+        votes: totalScore5,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore5 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      return results;
     } else if (zoneData.some(item => item.type === 'pollingStation')) {
-      // Pour un bureau de vote : récupérer le code CEL du lieu de vote
+      // Pour un bureau de vote : récupérer REF_LV et NUMERO_BV, puis filtrer précisément
       const bureauIds = zoneData
         .filter(item => item.type === 'pollingStation')
         .map(item => item.id);
       
       const bureaux = await this.prisma.tblBv.findMany({
         where: { id: { in: bureauIds } },
-        include: {
+        select: {
+          numeroBureauVote: true,
           lieuVote: {
-            select: { codeCellule: true }
+            select: { 
+              codeDepartement: true,
+              codeSousPrefecture: true,
+              codeCommune: true,
+              codeLieuVote: true
+            }
           }
         }
       });
 
-      codesCel = bureaux
-        .map(b => b.lieuVote?.codeCellule)
-        .filter((c): c is string => Boolean(c));
+      if (bureaux.length === 0) {
+        return [];
+      }
+
+      // Pour chaque bureau, construire REF_LV et récupérer NUMERO_BV
+      // Construire une requête qui filtre par REF_LV ET NUMERO_BV pour chaque bureau
+      const bureauConditions = bureaux.map(bureau => {
+        const lieuVote = bureau.lieuVote;
+        if (!lieuVote || !bureau.numeroBureauVote) return null;
+        
+        // Construire REF_LV : codeDepartement + codeSousPrefecture + codeCommune + codeLieuVote
+        const refLv = `${lieuVote.codeDepartement}${lieuVote.codeSousPrefecture}${lieuVote.codeCommune}${lieuVote.codeLieuVote}`;
+        const numeroBv = bureau.numeroBureauVote;
+        
+        return `(REF_LV = '${refLv.replace(/'/g, "''")}' AND NUMERO_BV = '${numeroBv.replace(/'/g, "''")}')`;
+      }).filter(c => c !== null);
+
+      if (bureauConditions.length === 0) {
+        return [];
+      }
+
+      // Faire directement la requête d'agrégation SANS déduplication, filtrée par REF_LV et NUMERO_BV
+      const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
+        totalScore1: bigint | null;
+        totalScore2: bigint | null;
+        totalScore3: bigint | null;
+        totalScore4: bigint | null;
+        totalScore5: bigint | null;
+      }>>(`
+        SELECT 
+          SUM(CAST(SCORE_1 AS BIGINT)) as totalScore1,
+          SUM(CAST(SCORE_2 AS BIGINT)) as totalScore2,
+          SUM(CAST(SCORE_3 AS BIGINT)) as totalScore3,
+          SUM(CAST(SCORE_4 AS BIGINT)) as totalScore4,
+          SUM(CAST(SCORE_5 AS BIGINT)) as totalScore5
+        FROM TBL_IMPORT_EXCEL_CEL
+        WHERE (${bureauConditions.join(' OR ')})
+          AND SCORE_1 IS NOT NULL 
+          AND SCORE_1 != ''
+      `);
+
+      const totalScore1 = aggregatedScores[0]?.totalScore1 ? Number(aggregatedScores[0].totalScore1) : 0;
+      const totalScore2 = aggregatedScores[0]?.totalScore2 ? Number(aggregatedScores[0].totalScore2) : 0;
+      const totalScore3 = aggregatedScores[0]?.totalScore3 ? Number(aggregatedScores[0].totalScore3) : 0;
+      const totalScore4 = aggregatedScores[0]?.totalScore4 ? Number(aggregatedScores[0].totalScore4) : 0;
+      const totalScore5 = aggregatedScores[0]?.totalScore5 ? Number(aggregatedScores[0].totalScore5) : 0;
+
+      const totalExprimes = totalScore1 + totalScore2 + totalScore3 + totalScore4 + totalScore5;
+      const results: ResultDto[] = [];
+
+      results.push({
+        candidateId: '1',
+        votes: totalScore1,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore1 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '2',
+        votes: totalScore2,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore2 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '3',
+        votes: totalScore3,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore3 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '4',
+        votes: totalScore4,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore4 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      results.push({
+        candidateId: '5',
+        votes: totalScore5,
+        percentage: totalExprimes > 0 
+          ? Number(((totalScore5 / totalExprimes) * 100).toFixed(2))
+          : 0
+      });
+      
+      return results;
     } else if (zoneData.some(item => item.type === 'region')) {
       // Pour une région : faire directement la requête d'agrégation avec jointure
       const regionIds = zoneData
@@ -961,7 +1145,7 @@ export class ResultatsService {
       const codeRegions = regions.map(r => r.codeRegion);
       const regionPlaceholders = codeRegions.map(r => `'${r.replace(/'/g, "''")}'`).join(',');
 
-      // Faire directement la requête d'agrégation avec jointure TBL_LV, TBL_DEPT et TBL_REG
+      // Faire directement la requête d'agrégation avec jointure SANS déduplication (comme pour les départements)
       const aggregatedScores = await this.prisma.$queryRawUnsafe<Array<{
         totalScore1: bigint | null;
         totalScore2: bigint | null;
@@ -969,36 +1153,19 @@ export class ResultatsService {
         totalScore4: bigint | null;
         totalScore5: bigint | null;
       }>>(`
-        WITH LatestRecords AS (
-          SELECT 
-            iec.COD_CEL,
-            iec.NUMERO_BV,
-            iec.SCORE_1,
-            iec.SCORE_2,
-            iec.SCORE_3,
-            iec.SCORE_4,
-            iec.SCORE_5,
-            ROW_NUMBER() OVER (
-              PARTITION BY iec.COD_CEL, iec.NUMERO_BV 
-              ORDER BY iec.DATE_IMPORT DESC, 
-                CASE WHEN iec.STATUT_IMPORT = 'COMPLETED' THEN 0 ELSE 1 END
-            ) as rn
-          FROM TBL_IMPORT_EXCEL_CEL iec
-          INNER JOIN TBL_LV lv ON lv.COD_CEL = iec.COD_CEL
-          INNER JOIN TBL_DEPT d ON d.COD_DEPT = lv.COD_DEPT
-          WHERE d.COD_REG IN (${regionPlaceholders})
-            AND d.STAT_PUB IN ('PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS')
-            AND iec.SCORE_1 IS NOT NULL 
-            AND iec.SCORE_1 != ''
-        )
         SELECT 
-          SUM(CAST(SCORE_1 AS BIGINT)) as totalScore1,
-          SUM(CAST(SCORE_2 AS BIGINT)) as totalScore2,
-          SUM(CAST(SCORE_3 AS BIGINT)) as totalScore3,
-          SUM(CAST(SCORE_4 AS BIGINT)) as totalScore4,
-          SUM(CAST(SCORE_5 AS BIGINT)) as totalScore5
-        FROM LatestRecords
-        WHERE rn = 1
+          SUM(CAST(iec.SCORE_1 AS BIGINT)) as totalScore1,
+          SUM(CAST(iec.SCORE_2 AS BIGINT)) as totalScore2,
+          SUM(CAST(iec.SCORE_3 AS BIGINT)) as totalScore3,
+          SUM(CAST(iec.SCORE_4 AS BIGINT)) as totalScore4,
+          SUM(CAST(iec.SCORE_5 AS BIGINT)) as totalScore5
+        FROM TBL_IMPORT_EXCEL_CEL iec
+        INNER JOIN TBL_LV lv ON lv.COD_CEL = iec.COD_CEL
+        INNER JOIN TBL_DEPT d ON d.COD_DEPT = lv.COD_DEPT
+        WHERE d.COD_REG IN (${regionPlaceholders})
+          AND d.STAT_PUB IN ('PUBLIE', 'PUBLIÉ', 'PUBLISHED', 'ACTIF', 'ACTIVE', 'EN_COURS', 'EN COURS', 'IN_PROGRESS')
+          AND iec.SCORE_1 IS NOT NULL 
+          AND iec.SCORE_1 != ''
       `);
 
       const totalScore1 = aggregatedScores[0]?.totalScore1 ? Number(aggregatedScores[0].totalScore1) : 0;

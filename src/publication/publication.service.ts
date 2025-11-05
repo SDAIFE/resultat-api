@@ -590,10 +590,37 @@ export class PublicationService {
 
     const pendingCels = celsRaw.filter(cel => !cel.ETA_RESULTAT_CEL || cel.ETA_RESULTAT_CEL === 'N');
     
-    if (pendingCels.length > 0) {
+    // Exception pour le département 999 : permettre la publication si les CELs non importées n'ont pas de données électorales
+    if (pendingCels.length > 0 && department.codeDepartement !== '999') {
       throw new BadRequestException(
         `Impossible de publier le département. ${pendingCels.length} CEL(s) ne sont pas encore importées.`
       );
+    }
+    
+    // Pour le département 999 : vérifier que les CELs non importées n'ont pas de données électorales
+    if (pendingCels.length > 0 && department.codeDepartement === '999') {
+      const pendingCelCodes = pendingCels.map(cel => cel.COD_CEL);
+      
+      // Vérifier si ces CELs ont des données dans TBL_IMPORT_EXCEL_CEL
+      const celPlaceholders = pendingCelCodes.map(c => `'${c.replace(/'/g, "''")}'`).join(',');
+      const celWithDataCount = await this.prisma.$queryRawUnsafe<Array<{ count: number }>>(`
+        SELECT COUNT(DISTINCT COD_CEL) as count
+        FROM TBL_IMPORT_EXCEL_CEL
+        WHERE COD_CEL IN (${celPlaceholders})
+          AND SCORE_1 IS NOT NULL 
+          AND SCORE_1 != ''
+      `);
+      
+      const count = celWithDataCount[0]?.count || 0;
+      
+      if (count > 0) {
+        throw new BadRequestException(
+          `Impossible de publier le département 999. ${count} CEL(s) non importées contiennent des données électorales et doivent être importées avant la publication.`
+        );
+      }
+      
+      // Si aucune donnée électorale dans les CELs non importées, on peut publier
+      console.log(`✅ Département 999 : ${pendingCels.length} CELs non importées mais sans données électorales. Publication autorisée.`);
     }
 
     // Mettre à jour le statut de publication du département

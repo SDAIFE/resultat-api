@@ -3,10 +3,10 @@ import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
 export enum ZoneType {
-  REGION = 'region',
-  DEPARTMENT = 'department',
-  VOTING_PLACE = 'votingPlace',
-  POLLING_STATION = 'pollingStation'
+  REGION = 'region', // Région
+  DEPARTMENT = 'department', // Département
+  VOTING_PLACE = 'votingPlace', // Lieu de vote
+  POLLING_STATION = 'pollingStation' // Bureau de vote
 }
 
 export class ZoneInfoDto {
